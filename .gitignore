@@ -1,7 +1,77 @@
-.DS_Store
+# ==========================================
+# 1. ORTAK VE ÇEVRESEL (ENV) DOSYALARI
+# ==========================================
+# Hassas şifreler ve API token'ları asla repoya gitmemeli!
 .env
-__pycache__/
-*.pyc
-node_modules/
-venv/
+.env.production
+.env.development
+.env.local
+*.env
+!*.env.example
+
+# İşletim sistemi ve editör dosyaları
+.DS_Store
+Thumbs.db
 .vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# ==========================================
+# 2. NODE.JS (NestJS & Nuxt 3) - Backend & Frontend
+# ==========================================
+# Bağımlılık klasörleri
+node_modules/
+.pnpm-debug.log*
+
+# Derleme (Build) ve Geçici Sistem Çıktıları
+dist/
+.nuxt/
+.output/
+.nitro/
+.cache/
+.turbo/
+out/
+build/
+
+# Log dosyaları
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-log.yaml
+
+# ==========================================
+# 3. PYTHON (FastAPI & Collector) - AI & Veri Toplama
+# ==========================================
+# Sanal Ortamlar (Virtual Environments)
+.venv/
+venv/
+ENV/
+env/
+bin/
+lib/
+include/
+
+# Python cache ve test çıktıları
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter Notebook yedekleri
+.ipynb_checkpoints/
+
+# ==========================================
+# 4. DOCKER & VERİTABANI
+# ==========================================
+# PostgreSQL ve Redis verilerinin yerelde kalması için
+.docker_data/
+postgres_data/
+redis_data/
