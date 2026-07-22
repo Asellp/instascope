@@ -1,0 +1,7 @@
+{
+  "name": "instascope",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter api start:dev"
+  }
+}
