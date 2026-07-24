@@ -1,0 +1,4 @@
+allowBuilds:
+  '@nestjs/core': true
+  es5-ext: set this to true or false
+  fsevents: set this to true or false

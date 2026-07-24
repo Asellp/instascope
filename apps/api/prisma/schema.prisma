@@ -1,14 +1,11 @@
-generator dbml {
-  provider = "prisma-dbml-generator"
-}
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
   provider = "prisma-client-js"
 }
-
 // 1. users Tablosu
 model User {
   id           String   @id @default(uuid())
