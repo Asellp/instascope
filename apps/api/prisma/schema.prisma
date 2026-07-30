@@ -1,0 +1,138 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+// 1. users Tablosu
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         String   @default("user")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+// 2. tracked_accounts Tablosu
+model TrackedAccount {
+  id             String   @id @default(uuid())
+  igUsername     String   @map("ig_username")
+  sourceType     String   @map("source_type")
+  accessTokenEnc String?  @map("access_token_enc")
+  scheduleCron   String?  @map("schedule_cron")
+  status         String   @default("active")
+
+  posts          Post[]
+  accountMetrics AccountMetric[]
+  collectionJobs CollectionJob[]
+
+  @@map("tracked_accounts")
+}
+
+// 3. posts Tablosu
+model Post {
+  id        String    @id @default(uuid())
+  accountId String    @map("account_id")
+  igMediaId String    @unique @map("ig_media_id")
+  type      String
+  caption   String?
+  postedAt  DateTime? @map("posted_at")
+  permalink String?
+
+  account     TrackedAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  postMetrics PostMetric[]
+  comments    Comment[]
+
+  @@map("posts")
+}
+
+// 4. post_metrics Tablosu
+model PostMetric {
+  id             String   @id @default(uuid())
+  postId         String   @map("post_id")
+  capturedAt     DateTime @default(now()) @map("captured_at")
+  likes          Int      @default(0)
+  commentsCount  Int      @default(0) @map("comments_count")
+  views          Int      @default(0)
+  reach          Int      @default(0)
+  engagementRate Float    @default(0.0) @map("engagement_rate")
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@map("post_metrics")
+}
+
+// 5. account_metrics Tablosu
+model AccountMetric {
+  id         String   @id @default(uuid())
+  accountId  String   @map("account_id")
+  capturedAt DateTime @default(now()) @map("captured_at")
+  followers  Int      @default(0)
+  following  Int      @default(0)
+  mediaCount Int      @default(0) @map("media_count")
+
+  account TrackedAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("account_metrics")
+}
+
+// 6. comments Tablosu
+model Comment {
+  id          String   @id @default(uuid())
+  postId      String   @map("post_id")
+  authorHash  String   @map("author_hash")
+  text        String
+  commentedAt DateTime @map("commented_at")
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@map("comments")
+}
+
+// 7. analysis_results Tablosu
+model AnalysisResult {
+  id           String   @id @default(uuid())
+  subjectType  String   @map("subject_type")
+  subjectId    String   @map("subject_id")
+  kind         String
+  payload      Json
+  modelVersion String   @map("model_version")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("analysis_results")
+}
+
+// 8. collection_jobs Tablosu
+model CollectionJob {
+  id             String    @id @default(uuid())
+  accountId      String    @map("account_id")
+  startedAt      DateTime  @default(now()) @map("started_at")
+  finishedAt     DateTime? @map("finished_at")
+  status         String
+  itemsCollected Int       @default(0) @map("items_collected")
+  error          String?
+
+  account TrackedAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("collection_jobs")
+}
+
+// 9. audit_logs Tablosu
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  action    String
+  resource  String
+  ip        String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}

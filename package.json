@@ -1,0 +1,19 @@
+{
+  "name": "instascope",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter api start:dev",
+    "seed": "prisma db seed"
+  },
+  "devDependencies": {
+    "@faker-js/faker": "^10.5.0",
+    "@nestjs/cli": "^11.0.24",
+    "@nestjs/schematics": "^11.1.0"
+  },
+  "dependencies": {
+    "@nestjs/swagger": "7.4.2"
+  },
+  "prisma": {
+  "seed": "ts-node prisma/seed.ts"
+}
+}
