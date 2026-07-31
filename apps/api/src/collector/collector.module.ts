@@ -5,6 +5,7 @@ import { CollectorProcessor } from './collector.processor';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { RealDataSourceService } from '../sources/real-data-source.service';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
       adapter: BullMQAdapter,
     }),
   ],
-  providers: [CollectorProcessor],
+  providers: [CollectorProcessor, RealDataSourceService],
 })
 export class CollectorModule implements OnModuleInit {
   constructor(@InjectQueue('collect') private collectQueue: Queue) {}

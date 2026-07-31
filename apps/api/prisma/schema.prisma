@@ -21,16 +21,17 @@ model User {
 
 // 2. tracked_accounts Tablosu
 model TrackedAccount {
-  id             String   @id @default(uuid())
-  igUsername     String   @map("ig_username")
-  sourceType     String   @map("source_type")
-  accessTokenEnc String?  @map("access_token_enc")
-  scheduleCron   String?  @map("schedule_cron")
-  status         String   @default("active")
+  id               String   @id @default(uuid())
+  igUsername       String   @map("ig_username")
+  igAccountId      String?  @map("ig_account_id") // <-- Bunu ekleyebiliriz
+  sourceType       String   @map("source_type")
+  accessTokenEnc   String?  @map("access_token_enc")
+  scheduleCron     String?  @map("schedule_cron")
+  status           String   @default("active")
 
-  posts          Post[]
-  accountMetrics AccountMetric[]
-  collectionJobs CollectionJob[]
+  posts            Post[]
+  accountMetrics   AccountMetric[]
+  collectionJobs   CollectionJob[]
 
   @@map("tracked_accounts")
 }
@@ -55,7 +56,7 @@ model Post {
 // 4. post_metrics Tablosu
 model PostMetric {
   id             String   @id @default(uuid())
-  postId         String   @map("post_id")
+  postId         String   @unique @map("post_id")
   capturedAt     DateTime @default(now()) @map("captured_at")
   likes          Int      @default(0)
   commentsCount  Int      @default(0) @map("comments_count")
