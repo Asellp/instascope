@@ -19,10 +19,9 @@ describe('AppController (e2e)', () => {
     await app.close();
   });
 
-  it('/ (GET)', () => {
-    return request(app.getHttpServer())
-      .get('/')
-      .expect(200)
-      .expect('Hello World!');
-  });
+  it('should fetch profile successfully', async () => {
+  await request(app.getHttpServer())
+    .get('/profile')
+    .expect(200);
+});
 });

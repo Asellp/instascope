@@ -4,6 +4,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AccountsModule } from './accounts/accounts.module';
+import { AuthModule } from './auth/auth.module';
 import { CollectorModule } from './collector/collector.module'; // <-- Yeni eklediğimiz modül
 
 @Module({
@@ -22,6 +23,7 @@ import { CollectorModule } from './collector/collector.module'; // <-- Yeni ekle
     }),
 
     AccountsModule,
+    AuthModule,
     CollectorModule, // <-- Kuyruk modülünü buraya dahil ediyoruz
   ],
   controllers: [AppController],
