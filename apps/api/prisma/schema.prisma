@@ -15,6 +15,7 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
 
   auditLogs AuditLog[]
+  refreshTokens RefreshToken[]
 
   @@map("users")
 }
@@ -136,4 +137,20 @@ model AuditLog {
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@map("audit_logs")
+}
+
+// 10. refresh_tokens Tablosu
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  family    String
+  userId    String   @map("user_id")
+  expiresAt DateTime  @map("expires_at")
+  used      Boolean   @default(false)
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([family])
+  @@map("refresh_tokens")
 }
