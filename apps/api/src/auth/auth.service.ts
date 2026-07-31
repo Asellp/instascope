@@ -1,8 +1,8 @@
 import { Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
-import * as argon2 from 'argon2';
 import * as jwt from 'jsonwebtoken';
-import { v4 as uuidv4 } from 'uuid';
+import { argon2Verify, argon2id } from 'hash-wasm';
 
 @Injectable()
 export class AuthService {
@@ -13,8 +13,14 @@ export class AuthService {
 
   // 1. Kullanıcı Kaydı (Argon2id Şifreleme)
   async register(email: string, password: string) {
-    const passwordHash = await argon2.hash(password, {
-      type: argon2.argon2id,
+    const passwordHash = await argon2id({
+      password,
+      salt: crypto.randomBytes(16),
+      parallelism: 1,
+      iterations: 3,
+      memorySize: 4096,
+      hashLength: 32,
+      outputType: 'encoded',
     });
     return this.prisma.user.create({
       data: { email, passwordHash },
@@ -26,10 +32,13 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) throw new UnauthorizedException('Geçersiz kimlik bilgileri');
 
-    const passwordValid = await argon2.verify(user.passwordHash, password);
+    const passwordValid = await argon2Verify({
+      password,
+      hash: user.passwordHash,
+    });
     if (!passwordValid) throw new UnauthorizedException('Geçersiz kimlik bilgileri');
 
-    const tokenFamily = uuidv4();
+    const tokenFamily = crypto.randomBytes(16).toString('hex');
     return this.generateTokens(user.id, tokenFamily);
   }
 

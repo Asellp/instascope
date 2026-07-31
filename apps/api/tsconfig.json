@@ -5,16 +5,21 @@
     "removeComments": true,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
-    "target": "es2017",
+    "target": "es2021",
     "sourceMap": true,
     "outDir": "./dist",
+    "rootDir": "./src", // 👈 İşte TypeScript'in layout hatasını çözen kritik satır!
     "baseUrl": "./",
     "ignoreDeprecations": "6.0",
+    "paths": {
+      "@/*": ["src/*"]
+    },
     "incremental": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "types": ["jest", "node"]
   },
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }
