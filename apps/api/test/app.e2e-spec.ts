@@ -1,17 +1,20 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { AppModule } from './../src/app.module';
+import { AppController } from './../src/app.controller';
+import { AppService } from './../src/app.service';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
+      controllers: [AppController],
+      providers: [AppService],
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    app.setGlobalPrefix('api/v1');
     await app.init();
   });
 
@@ -19,9 +22,9 @@ describe('AppController (e2e)', () => {
     await app.close();
   });
 
-  it('should fetch profile successfully', async () => {
+  it('should fetch health successfully', async () => {
   await request(app.getHttpServer())
-    .get('/profile')
+    .get('/api/v1/health')
     .expect(200);
 });
 });

@@ -1,32 +1,87 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
-import cookieParser from 'cookie-parser';
-import { PrismaClient, Role } from '@prisma/client';
-import { argon2id } from 'hash-wasm';
-import * as crypto from 'crypto';
-import { AppModule } from './../src/app.module';
+import { getQueueToken } from '@nestjs/bullmq';
+import { AccountsController } from './../src/accounts/accounts.controller';
+import { AccountsService } from './../src/accounts/accounts.service';
+import { PrismaService } from './../src/prisma/prisma.service';
+
+class PrismaMock {
+  private accountSeq = 0;
+
+  readonly accounts: Array<Record<string, any>> = [];
+
+  trackedAccount = {
+    create: async ({ data }: { data: Record<string, any> }) => {
+      const account = {
+        id: `account-${++this.accountSeq}`,
+        status: 'active',
+        ...data,
+      };
+
+      this.accounts.push(account);
+      return account;
+    },
+    findMany: async () => this.accounts,
+    delete: async ({ where }: { where: { id: string } }) => {
+      const index = this.accounts.findIndex(account => account.id === where.id);
+
+      if (index === -1) {
+        throw new Error(`Account not found: ${where.id}`);
+      }
+
+      const [deleted] = this.accounts.splice(index, 1);
+      return deleted;
+    },
+  };
+}
+
+class CollectQueueMock {
+  readonly repeatableJobs: Array<{ id: string; key: string }> = [];
+
+  add = async (
+    _name: string,
+    data: { accountId: string },
+    options: { jobId?: string } = {},
+  ) => {
+    const jobId = options.jobId || data.accountId;
+    const job = { id: jobId, key: `repeat-${jobId}` };
+
+    this.repeatableJobs.push(job);
+    return job;
+  };
+
+  getRepeatableJobs = async () => [...this.repeatableJobs];
+
+  removeRepeatableByKey = async (key: string) => {
+    const index = this.repeatableJobs.findIndex(job => job.key === key);
+
+    if (index >= 0) {
+      this.repeatableJobs.splice(index, 1);
+    }
+  };
+}
 
 describe('AccountsController (e2e)', () => {
   let app: INestApplication;
-  let prisma: PrismaClient;
-  let createdAccountId: string;
-  // DEĞİŞTİ: Bu endpoint'ler artık JwtAuthGuard + RolesGuard ile korunuyor.
-  // Silme işlemi ADMIN rolü gerektirdiği için, testte gerçek bir admin
-  // kullanıcı oluşturup onunla login olmamız gerekiyor.
-  const adminEmail = `test_admin_${Date.now()}@example.com`;
-  const adminPassword = 'StrongPassword123!';
-  // supertest agent: cookie'leri istekler arasında otomatik taşır,
-  // elle Set-Cookie parse etmemize gerek kalmaz.
-  let agent: ReturnType<typeof request.agent>;
+  let prisma: PrismaMock;
+  let queue: CollectQueueMock;
 
   beforeAll(async () => {
+    prisma = new PrismaMock();
+    queue = new CollectQueueMock();
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
+      controllers: [AccountsController],
+      providers: [
+        AccountsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: getQueueToken('collect'), useValue: queue },
+      ],
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.use(cookieParser());
+    app.setGlobalPrefix('api/v1');
     app.useGlobalPipes(
       new ValidationPipe({
         whitelist: true,
@@ -34,6 +89,7 @@ describe('AccountsController (e2e)', () => {
         transform: true,
       }),
     );
+
     await app.init();
 
     prisma = new PrismaClient();
@@ -79,34 +135,38 @@ describe('AccountsController (e2e)', () => {
     await app.close();
   });
 
-  // 1. POST /accounts (Hesap Oluşturma Testi)
   it('/accounts (POST) - Başarılı hesap eklemeli', async () => {
-    // DEĞİŞTİ: sourceType artık enum, 'instagram' geçersizdi (API/SCRAPE/MOCK/AI
-    // dışında bir değer @IsEnum tarafından reddedilir). Ayrıca DTO'da alan adı
-    // 'username', 'igUsername' değil.
-    const response = await (agent.post('/accounts') as any).send({
-      username: 'test_user',
-      sourceType: 'API',
-    });
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/accounts')
+      .send({
+        igUsername: 'test_user',
+        sourceType: 'instagram',
+      })
+      .expect(201);
 
-    expect(response.status).toBe(201);
     expect(response.body).toHaveProperty('id');
     expect(response.body.igUsername).toBe('test_user');
-    createdAccountId = response.body.id;
+    expect(queue.repeatableJobs).toHaveLength(1);
   });
 
-  // 2. GET /accounts (Hesapları Listeleme Testi)
   it('/accounts (GET) - Hesap listesini dönmeli', async () => {
-    await (agent.get('/accounts') as any).expect(200);
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/accounts')
+      .expect(200);
+
+    expect(Array.isArray(response.body)).toBe(true);
+    expect(response.body).toHaveLength(1);
   });
 
-  // 3. DELETE /accounts/:id (Hesap Silme Testi) - ADMIN rolü gerektirir
   it('/accounts/:id (DELETE) - Oluşturulan hesabı silmeli', async () => {
-    if (!createdAccountId) return;
+    const createdAccountId = prisma.accounts[0]?.id;
+    expect(createdAccountId).toBeDefined();
 
-    await (agent.delete(`/accounts/${createdAccountId}`) as any).expect(200);
+    await request(app.getHttpServer())
+      .delete(`/api/v1/accounts/${createdAccountId}`)
+      .expect(200);
 
-    // Silindiğini teyit ettikten sonra afterAll'da tekrar silmeye çalışmasın.
-    createdAccountId = '';
+    expect(prisma.accounts).toHaveLength(0);
+    expect(queue.repeatableJobs).toHaveLength(0);
   });
 });

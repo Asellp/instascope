@@ -1,9 +1,49 @@
-import { PrismaClient, Role, SourceType } from '@prisma/client';
-import { fakerTR as faker } from '@faker-js/faker';
+import { PrismaClient } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 
 const prisma = new PrismaClient();
+
+function randomInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randomFloat(min: number, max: number, fractionDigits = 2) {
+  const value = Math.random() * (max - min) + min;
+  return Number(value.toFixed(fractionDigits));
+}
+
+function randomChoice<T>(items: T[]) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function randomAlphanumeric(length: number) {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+
+  for (let i = 0; i < length; i += 1) {
+    result += chars[Math.floor(Math.random() * chars.length)];
+  }
+
+  return result;
+}
+
+function randomHexadecimal(length: number) {
+  const chars = '0123456789abcdef';
+  let result = '';
+
+  for (let i = 0; i < length; i += 1) {
+    result += chars[Math.floor(Math.random() * chars.length)];
+  }
+
+  return result;
+}
+
+function recentDate(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() - randomInt(0, days));
+  return date;
+}
 
 async function main() {
   console.log('Seed işlemi başlatılıyor...');
@@ -82,30 +122,30 @@ async function main() {
         data: {
           accountId: account.id,
           capturedAt: metricDate,
-          followers: faker.number.int({ min: 5000, max: 15000 }),
-          following: faker.number.int({ min: 300, max: 800 }),
-          mediaCount: faker.number.int({ min: 50, max: 200 }),
+          followers: randomInt(5000, 15000),
+          following: randomInt(300, 800),
+          mediaCount: randomInt(50, 200),
         },
       });
     }
 
     for (let i = 0; i < 35; i++) {
-      const baseDate = faker.date.recent({ days: 180 });
+      const baseDate = recentDate(180);
       const hours = [18, 19, 20, 21, 22, 23, 12, 14, 15];
-      const selectedHour = faker.helpers.arrayElement(hours);
-      baseDate.setHours(selectedHour, faker.number.int({ min: 0, max: 59 }), 0, 0);
+      const selectedHour = randomChoice(hours);
+      baseDate.setHours(selectedHour, randomInt(0, 59), 0, 0);
 
-      const randomCaption = faker.helpers.arrayElement(turkishCaptions);
+      const randomCaption = randomChoice(turkishCaptions);
       const fullCaption = `${randomCaption} #${accData.igUsername}`;
 
       const post = await prisma.post.create({
         data: {
           accountId: account.id,
-          igMediaId: faker.string.alphanumeric(15),
-          type: faker.helpers.arrayElement(['IMAGE', 'VIDEO', 'CAROUSEL_ALBUM']),
+          igMediaId: randomAlphanumeric(15),
+          type: randomChoice(['IMAGE', 'VIDEO', 'CAROUSEL_ALBUM']),
           caption: fullCaption,
           postedAt: baseDate,
-          permalink: `https://instagram.com/p/${faker.string.alphanumeric(10)}/`,
+          permalink: `https://instagram.com/p/${randomAlphanumeric(10)}/`,
         },
       });
 
@@ -114,11 +154,11 @@ async function main() {
         data: {
           postId: post.id,
           capturedAt: baseDate,
-          likes: faker.number.int({ min: 100, max: 2500 }),
+          likes: randomInt(100, 2500),
           commentsCount: 0, // Başlangıç 0, aşağıda güncelleyeceğiz
-          views: faker.number.int({ min: 1000, max: 20000 }),
-          reach: faker.number.int({ min: 800, max: 15000 }),
-          engagementRate: faker.number.float({ min: 1.5, max: 8.5, fractionDigits: 2 }),
+          views: randomInt(1000, 20000),
+          reach: randomInt(800, 15000),
+          engagementRate: randomFloat(1.5, 8.5, 2),
         },
       });
 
@@ -132,15 +172,15 @@ async function main() {
 
     for (const extComment of externalComments) {
       // Rastgele bir hedef post seçimi
-      const targetItem = faker.helpers.arrayElement(createdPosts);
-
+      const targetItem = randomChoice(createdPosts);
+      
       const commentDate = new Date(targetItem.post.postedAt);
-      commentDate.setHours(commentDate.getHours() + faker.number.int({ min: 1, max: 48 }));
+      commentDate.setHours(commentDate.getHours() + randomInt(1, 48));
 
       await prisma.comment.create({
         data: {
           postId: targetItem.post.id,
-          authorHash: extComment.authorHash || faker.string.hexadecimal({ length: 16 }),
+          authorHash: extComment.authorHash || randomHexadecimal(16),
           text: extComment.text,
           commentedAt: commentDate,
         },

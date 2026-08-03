@@ -29,7 +29,7 @@ model User {
   role         Role     @default(USER) // <-- DEĞİŞTİ: String -> Role enum
   createdAt    DateTime @default(now()) @map("created_at")
 
-  auditLogs     AuditLog[]
+  auditLogs AuditLog[]
   refreshTokens RefreshToken[]
 
   @@map("users")
@@ -167,21 +167,18 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+// 10. refresh_tokens Tablosu
 model RefreshToken {
   id        String   @id @default(uuid())
-  token     String   @unique // NOT: artık ham token değil, SHA-256 hash tutuyor
-  // (auth.service.ts'deki güncellemeyle uyumlu). İleride migration ile
-  // "tokenHash" olarak yeniden adlandırmayı düşünebilirsin, şimdilik
-  // service katmanındaki değişiklik yeterli, alan adı aynı kalabilir.
+  token     String   @unique
   family    String
   userId    String   @map("user_id")
-  expiresAt DateTime @map("expires_at")
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime  @map("expires_at")
+  used      Boolean   @default(false)
+  createdAt DateTime  @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([family])
-  @@index([userId]) // <-- YENİ
   @@map("refresh_tokens")
 }

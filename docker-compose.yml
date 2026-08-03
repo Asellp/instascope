@@ -1,7 +1,94 @@
 services:
+  # 1. Veri Tabanı (Postgres)
+  postgres:
+    image: postgres:15-alpine
+    container_name: instascope-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+      POSTGRES_DB: ${DB_NAME:-instascope_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Önbellek ve Kuyruk (Redis)
   redis:
-    image: redis:alpine
-    container_name: instascope_redis
+    image: redis:7-alpine
+    container_name: instascope-redis
     ports:
       - "6379:6379"
-    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # 3. Backend API (Monorepo Yoluna Göre)
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/DockerFile
+    container_name: instascope-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+      - DATABASE_URL=${DATABASE_URL}
+      - META_ACCESS_TOKEN=${META_ACCESS_TOKEN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # 4. Veri Toplayıcı (Collector)
+  collector:
+    build:
+      context: .
+      dockerfile: apps/collector/DockerFile
+    container_name: instascope-collector
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # 5. Yapay Zeka Servisi (AI)
+  ai:
+    build:
+      context: ./ai
+      dockerfile: DockerFile
+    container_name: instascope-ai
+    ports:
+      - "5001:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # 6. Frontend Web Arayüzü
+  web:
+    build:
+      context: ./web
+      dockerfile: DockerFile
+    container_name: instascope-web
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  redis_data:

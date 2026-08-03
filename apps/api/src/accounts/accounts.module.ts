@@ -3,11 +3,12 @@ import { BullModule } from '@nestjs/bullmq';
 import { AccountsController } from './accounts.controller';
 import { AccountsService } from './accounts.service';
 import { PrismaModule } from '../prisma/prisma.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
     PrismaModule,
-    // BURAYI EKLEMEMİZ GEREKİR:
+    AuthModule,
     BullModule.registerQueue({
       name: 'collect',
     }),

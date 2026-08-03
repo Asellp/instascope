@@ -4,8 +4,8 @@ import { BullModule } from '@nestjs/bullmq';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AccountsModule } from './accounts/accounts.module';
-import { CollectorModule } from './collector/collector.module';
-import { AuthModule } from './auth/auth.module'; // <-- Auth modülünü ekliyoruz
+import { AuthModule } from './auth/auth.module';
+import { CollectorModule } from './collector/collector.module'; // <-- Yeni eklediğimiz modül
 
 @Module({
   imports: [
@@ -19,7 +19,8 @@ import { AuthModule } from './auth/auth.module'; // <-- Auth modülünü ekliyor
 
     AuthModule,     // <-- Güvenlik ve JWT modülünü buraya dahil ediyoruz
     AccountsModule,
-    CollectorModule,
+    AuthModule,
+    CollectorModule, // <-- Kuyruk modülünü buraya dahil ediyoruz
   ],
   controllers: [AppController],
   providers: [AppService],
