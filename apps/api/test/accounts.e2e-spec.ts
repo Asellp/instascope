@@ -91,9 +91,47 @@ describe('AccountsController (e2e)', () => {
     );
 
     await app.init();
+
+    prisma = new PrismaClient();
+
+    // Register endpoint'i her zaman USER rolü atadığı için (güvenlik amaçlı,
+    // kendi kendini admin yapamamalı), admin kullanıcıyı doğrudan DB'ye,
+    // gerçek AuthService'teki ile aynı hash algoritmasıyla oluşturuyoruz.
+    const passwordHash = await argon2id({
+      password: adminPassword,
+      salt: crypto.randomBytes(16),
+      parallelism: 1,
+      iterations: 3,
+      memorySize: 19456,
+      hashLength: 32,
+      outputType: 'encoded',
+    });
+
+    await prisma.user.create({
+      data: {
+        email: adminEmail,
+        passwordHash,
+        role: Role.ADMIN,
+      },
+    });
+
+    agent = request.agent(app.getHttpServer());
+    await (agent.post('/auth/login') as any)
+      .send({ email: adminEmail, password: adminPassword })
+      .expect(200);
   });
 
   afterAll(async () => {
+    // Test verisini temizle: hem oluşturulan hesabı (varsa) hem admin kullanıcıyı.
+    if (createdAccountId) {
+      await prisma.trackedAccount
+        .delete({ where: { id: createdAccountId } })
+        .catch(() => {
+          // Test içinde zaten silinmiş olabilir, sorun değil.
+        });
+    }
+    await prisma.user.deleteMany({ where: { email: adminEmail } });
+    await prisma.$disconnect();
     await app.close();
   });
 

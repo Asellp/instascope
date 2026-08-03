@@ -9,11 +9,6 @@ import { CollectorModule } from './collector/collector.module'; // <-- Yeni ekle
 
 @Module({
   imports: [
-    // .env dosyasını otomatik okuması için ConfigModule'ü projeye yüklüyoruz
-    // ConfigModule.forRoot({
-    //   isGlobal: true,
-    // }),
-
     // Docker üzerinde çalışan Redis bağlantısını yapılandırıyoruz
     BullModule.forRoot({
       connection: {
@@ -22,6 +17,7 @@ import { CollectorModule } from './collector/collector.module'; // <-- Yeni ekle
       },
     }),
 
+    AuthModule,     // <-- Güvenlik ve JWT modülünü buraya dahil ediyoruz
     AccountsModule,
     AuthModule,
     CollectorModule, // <-- Kuyruk modülünü buraya dahil ediyoruz

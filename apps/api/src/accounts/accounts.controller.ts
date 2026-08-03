@@ -1,49 +1,72 @@
-import { Controller, Get, Post, Delete, Body, Param } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Body,
+  Param,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+} from '@nestjs/common';
 import { AccountsService } from './accounts.service';
-import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
-
-export class CreateAccountDto {
-  @ApiProperty({
-    description: 'Eklenecek Instagram kullanıcı adı',
-    example: 'zeynep_dev',
-  })
-  @IsString({ message: 'Instagram kullanıcı adı metin olmalıdır.' })
-  @IsNotEmpty({ message: 'Instagram kullanıcı adı boş bırakılamaz.' })
-  igUsername!: string;
-
-  @ApiProperty({
-    description: 'Kaynak türü',
-    example: 'instagram',
-  })
-  @IsString({ message: 'Kaynak türü metin olmalıdır.' })
-  @IsNotEmpty({ message: 'Kaynak türü boş bırakılamaz.' })
-  sourceType!: string;
-
-  @ApiPropertyOptional({
-    description: 'İsteğe bağlı erişim anahtarı',
-  })
-  @IsOptional()
-  @IsString()
-  accessTokenEnc?: string;
-}
+import { CreateAccountDto } from './dto/create-account.dto';
+import { AccountResponseDto } from './dto/response-account.dto';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '@prisma/client';
+import { plainToInstance } from 'class-transformer';
 
 @ApiTags('accounts')
+@ApiBearerAuth()
+// Tüm controller artık JWT ile korunuyor - önceden hiç guard yoktu,
+// kimlik doğrulaması olmadan hesap ekleme/silme/listeleme mümkündü.
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('accounts')
 export class AccountsController {
   constructor(private readonly accountsService: AccountsService) {}
 
   @Post()
+  @HttpCode(HttpStatus.CREATED)
   create(@Body() createAccountDto: CreateAccountDto) {
     return this.accountsService.create(createAccountDto);
   }
 
   @Get()
-  findAll() {
-    return this.accountsService.findAll();
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.ADMIN)
+  async findAll() {
+    const accounts = await this.accountsService.findAll();
+    return plainToInstance(AccountResponseDto, accounts, {
+      excludeExtraneousValues: false,
+    });
   }
 
+  @Get(':id')
+  @HttpCode(HttpStatus.OK)
+  findOne(@Param('id') id: string) {
+    return this.accountsService.findOne(id);
+  }
+
+  @Get(':id/metrics')
+  @HttpCode(HttpStatus.OK)
+  getAccountMetrics(@Param('id') id: string) {
+    return this.accountsService.getAccountMetrics(id);
+  }
+
+  @Get(':id/posts')
+  @HttpCode(HttpStatus.OK)
+  getAccountPosts(@Param('id') id: string) {
+    return this.accountsService.getAccountPosts(id);
+  }
+
+  // Silme işlemi ekstra kritik - sadece ADMIN rolü yapabilsin.
+  // RolesGuard zaten kurulmuştu ama hiçbir yerde kullanılmıyordu, ilk kullanımı burada.
+  @Roles(Role.ADMIN)
   @Delete(':id')
+  @HttpCode(HttpStatus.OK)
   remove(@Param('id') id: string) {
     return this.accountsService.remove(id);
   }
