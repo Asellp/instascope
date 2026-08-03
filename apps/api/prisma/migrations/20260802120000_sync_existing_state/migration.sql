@@ -1,0 +1,28 @@
+-- AlterTable
+ALTER TABLE "tracked_accounts" ADD COLUMN     "ig_account_id" TEXT;
+
+-- CreateTable
+CREATE TABLE "refresh_tokens" (
+    "id" TEXT NOT NULL,
+    "token" TEXT NOT NULL,
+    "family" TEXT NOT NULL,
+    "user_id" TEXT NOT NULL,
+    "expires_at" TIMESTAMP(3) NOT NULL,
+    "used" BOOLEAN NOT NULL DEFAULT false,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "refresh_tokens_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE INDEX "refresh_tokens_family_idx" ON "refresh_tokens"("family" ASC);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "refresh_tokens_token_key" ON "refresh_tokens"("token" ASC);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "post_metrics_post_id_key" ON "post_metrics"("post_id" ASC);
+
+-- AddForeignKey
+ALTER TABLE "refresh_tokens" ADD CONSTRAINT "refresh_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+

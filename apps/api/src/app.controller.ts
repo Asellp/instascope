@@ -18,4 +18,9 @@ export class AppController {
       timestamp: new Date().toISOString(), // O anki tarih/saat bilgisi
     };
   }
+  @Get('profile')
+  // @UseGuards(JwtAuthGuard) // Token doğrulaması eklendiğinde açılacak
+  getProfile() {
+    return { message: 'Protected profile route' };
+  }
 }

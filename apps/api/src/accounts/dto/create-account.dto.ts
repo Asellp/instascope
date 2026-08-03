@@ -1,28 +1,39 @@
-import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, IsEnum, Matches } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { SourceType } from '@prisma/client';
 
 export class CreateAccountDto {
   @ApiProperty({
-    description: 'Eklenecek hesabın kullanıcı adı',
-    example: 'zeynep_dev',
+    description: 'Eklenecek Instagram kullanıcı adı',
+    example: 'atolye.studio',
   })
-  @IsString({ message: 'Kullanıcı adı metin (string) olmalıdır.' })
-  @IsNotEmpty({ message: 'Kullanıcı adı boş bırakılamaz.' })
+  @IsString({ message: 'Instagram kullanıcı adı metin olmalıdır.' })
+  @IsNotEmpty({ message: 'Instagram kullanıcı adı boş bırakılamaz.' })
+  @Matches(/^[a-zA-Z0-9._]{1,30}$/, {
+    message: 'Geçerli bir Instagram kullanıcı adı giriniz.',
+  })
   username!: string;
 
   @ApiProperty({
-    description: 'Hesabın bağlı olduğu platform',
-    example: 'instagram',
+    description: 'Kaynak türü',
+    example: SourceType.API,
+    enum: SourceType,
   })
-  @IsString({ message: 'Platform adı metin (string) olmalıdır.' })
-  @IsNotEmpty({ message: 'Platform bilgisi boş bırakılamaz.' })
-  platform!: string;
+  @IsEnum(SourceType, { message: 'Geçerli bir kaynak türü seçiniz.' })
+  sourceType!: SourceType;
 
   @ApiPropertyOptional({
-    description: 'Hesap hakkında isteğe bağlı açıklama/not',
-    example: 'Kişisel geliştirici hesabı',
+    description: 'Toplama sıklığı',
+    example: 'daily',
   })
   @IsOptional()
-  @IsString({ message: 'Açıklama metin (string) olmalıdır.' })
-  bio?: string;
+  @IsString()
+  frequency?: string;
+
+  @ApiPropertyOptional({
+    description: 'İsteğe bağlı erişim anahtarı',
+  })
+  @IsOptional()
+  @IsString()
+  accessTokenEnc?: string;
 }

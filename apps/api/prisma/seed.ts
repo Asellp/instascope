@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Role, SourceType } from '@prisma/client';
 import { fakerTR as faker } from '@faker-js/faker';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -19,7 +19,7 @@ async function main() {
   // AI stajyerinin hazırladığı dış JSON dosyasını okuyalım
   const jsonPath = path.join(__dirname, 'mock_comments.json');
   let externalComments: any[] = [];
-  
+
   if (fs.existsSync(jsonPath)) {
     const rawData = fs.readFileSync(jsonPath, 'utf8');
     externalComments = JSON.parse(rawData);
@@ -29,19 +29,22 @@ async function main() {
   }
 
   // 1. Admin / Test Kullanıcısı Oluşturma
+  // DEĞİŞTİ: role artık enum, 'admin' yerine Role.ADMIN kullanılıyor.
   await prisma.user.create({
     data: {
       email: 'admin@instascope.test',
       passwordHash: 'dummy_hash_for_seed',
-      role: 'admin',
+      role: Role.ADMIN,
     },
   });
 
   // 2. 3 Adet Takip Edilen Hesap (TrackedAccount) Oluşturma
-  const accountsData = [
-    { igUsername: 'teknoloji_gunlugu', sourceType: 'api' },
-    { igUsername: 'anadolu_gezgini', sourceType: 'api' },
-    { igUsername: 'kahve_ve_kitap', sourceType: 'scraper' },
+  // DEĞİŞTİ: sourceType artık enum. Ayrıca 'scraper' geçersiz bir değerdi,
+  // enum'da sadece SCRAPE tanımlı - buna göre düzeltildi.
+  const accountsData: { igUsername: string; sourceType: SourceType }[] = [
+    { igUsername: 'teknoloji_gunlugu', sourceType: SourceType.API },
+    { igUsername: 'anadolu_gezgini', sourceType: SourceType.API },
+    { igUsername: 'kahve_ve_kitap', sourceType: SourceType.SCRAPE },
   ];
 
   const turkishCaptions = [
@@ -54,7 +57,7 @@ async function main() {
     'Doğayla baş başa kalıp kafayı dinlemek için harika bir yer 🌿',
     'Yazılım dünyasındaki son gelişmeler ve trendler hakkında ne düşünüyorsunuz?',
     'Günün önerisi: Kesinlikle okumanız gereken harika bir kitap 📚',
-    'Ekip olarak yine yoğun ve keyifli bir günün sonuna geldik.'
+    'Ekip olarak yine yoğun ve keyifli bir günün sonuna geldik.',
   ];
 
   // Postları ve her postun aldığı yorum sayısını takip edeceğimiz yapı
@@ -126,11 +129,11 @@ async function main() {
   // Yorumları Dağıtma ve Sayıları Güncelleme
   if (externalComments.length > 0) {
     console.log(`${externalComments.length} adet harici yorum postlara dağıtılıyor...`);
-    
+
     for (const extComment of externalComments) {
       // Rastgele bir hedef post seçimi
       const targetItem = faker.helpers.arrayElement(createdPosts);
-      
+
       const commentDate = new Date(targetItem.post.postedAt);
       commentDate.setHours(commentDate.getHours() + faker.number.int({ min: 1, max: 48 }));
 

@@ -11,9 +11,10 @@
     "@nestjs/schematics": "^11.1.0"
   },
   "dependencies": {
-    "@nestjs/swagger": "7.4.2"
+    "@nestjs/swagger": "7.4.2",
+    "axios": "^1.18.1"
   },
   "prisma": {
-  "seed": "ts-node prisma/seed.ts"
-}
+    "seed": "ts-node prisma/seed.ts"
+  }
 }

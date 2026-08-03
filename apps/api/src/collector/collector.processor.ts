@@ -3,6 +3,7 @@ import { Job } from 'bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealDataSourceService } from '../sources/real-data-source.service';
+import { SourceType } from '@prisma/client';
 
 @Processor('collect')
 @Injectable()
@@ -22,13 +23,16 @@ export class CollectorProcessor extends WorkerHost {
 
   async process(job: Job<any, any, string>): Promise<any> {
     this.logger.log(`[BullMQ] 'collect' işi başladı! Job ID: ${job.id}`);
-    
+
     const accountId = job.data?.accountId;
 
     // Hangi hesapların işleneceğini belirleyelim
+    // DEĞİŞTİ: 'api' string literal yerine SourceType.API enum değeri kullanılıyor.
     const accounts = accountId
       ? await this.prisma.trackedAccount.findMany({ where: { id: accountId, status: 'active' } })
-      : await this.prisma.trackedAccount.findMany({ where: { status: 'active', sourceType: 'api' } });
+      : await this.prisma.trackedAccount.findMany({
+          where: { status: 'active', sourceType: SourceType.API },
+        });
 
     if (accounts.length === 0) {
       this.logger.warn('İşlenecek aktif hesap bulunamadı.');
@@ -58,8 +62,8 @@ export class CollectorProcessor extends WorkerHost {
         this.logger.log(`Hesap işleniyor: ${account.igUsername} (ID: ${account.id})`);
 
         const realPostsResponse = await this.realDataSource.fetchPosts({
-          accessToken: account.accessTokenEnc, 
-          igAccountId: account.igAccountId,     
+          accessToken: account.accessTokenEnc,
+          igAccountId: account.igAccountId,
           platform: account.igUsername,
         });
 
@@ -97,36 +101,36 @@ export class CollectorProcessor extends WorkerHost {
               },
             });
 
-            // BURASI EKSİKTİ: Her post için ayrı ayrı yorumları çekelim
+            // Her post için ayrı ayrı yorumları çekelim
             const commentsResponse = await this.realDataSource.fetchComments({
               accessToken: account.accessTokenEnc,
               igMediaId: item.id,
             });
 
             if (commentsResponse && commentsResponse.data) {
-  for (const commentItem of commentsResponse.data) {
-    // Önce aynı metne ve posta sahip yorum var mı diye bakalım
-    const existingComment = await this.prisma.comment.findFirst({
-      where: {
-        postId: savedPost.id,
-        text: commentItem.text,
-        authorHash: commentItem.username || 'anonymous',
-      },
-    });
+              for (const commentItem of commentsResponse.data) {
+                // Önce aynı metne ve posta sahip yorum var mı diye bakalım
+                const existingComment = await this.prisma.comment.findFirst({
+                  where: {
+                    postId: savedPost.id,
+                    text: commentItem.text,
+                    authorHash: commentItem.username || 'anonymous',
+                  },
+                });
 
-    // Eğer yoksa yeni olrak kaydedelim
-    if (!existingComment) {
-      await this.prisma.comment.create({
-        data: {
-          postId: savedPost.id,
-          authorHash: commentItem.username || 'anonymous',
-          text: commentItem.text,
-          commentedAt: new Date(commentItem.timestamp || Date.now()),
-        },
-      });
-    }
-  }
-}
+                // Eğer yoksa yeni olarak kaydedelim
+                if (!existingComment) {
+                  await this.prisma.comment.create({
+                    data: {
+                      postId: savedPost.id,
+                      authorHash: commentItem.username || 'anonymous',
+                      text: commentItem.text,
+                      commentedAt: new Date(commentItem.timestamp || Date.now()),
+                    },
+                  });
+                }
+              }
+            }
           }
         }
 

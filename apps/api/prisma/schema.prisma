@@ -6,33 +6,53 @@ datasource db {
 generator client {
   provider = "prisma-client-js"
 }
+
+// --- YENİ: role artık serbest string değil, enum ---
+enum Role {
+  USER
+  ADMIN
+}
+
+// --- YENİ: sourceType için enum (accounts.service.ts / data-source.factory.ts ile hizalı olmalı) ---
+enum SourceType {
+  API
+  SCRAPE
+  MOCK
+  AI
+}
+
 // 1. users Tablosu
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
   passwordHash String   @map("password_hash")
-  role         String   @default("user")
+  role         Role     @default(USER) // <-- DEĞİŞTİ: String -> Role enum
   createdAt    DateTime @default(now()) @map("created_at")
 
-  auditLogs AuditLog[]
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
 
   @@map("users")
 }
 
 // 2. tracked_accounts Tablosu
 model TrackedAccount {
-  id               String   @id @default(uuid())
-  igUsername       String   @map("ig_username")
-  igAccountId      String?  @map("ig_account_id") // <-- Bunu ekleyebiliriz
-  sourceType       String   @map("source_type")
-  accessTokenEnc   String?  @map("access_token_enc")
-  scheduleCron     String?  @map("schedule_cron")
-  status           String   @default("active")
+  id             String     @id @default(uuid())
+  igUsername     String     @map("ig_username")
+  igAccountId    String?    @map("ig_account_id")
+  sourceType     SourceType @map("source_type") // <-- DEĞİŞTİ: String -> SourceType enum
+  accessTokenEnc String?    @map("access_token_enc") // Not: alan adı "enc" diyor,
+  // gerçekten encrypt edilmediği sürece bu isim yanıltıcı - encryption service
+  // eklendiğinde bu alanı kullan, service katmanında şifrele/çöz.
+  scheduleCron String?          @map("schedule_cron")
+  status       String           @default("active")
+  posts        Post[]
+  accountMetrics AccountMetric[]
+  collectionJobs CollectionJob[]
 
-  posts            Post[]
-  accountMetrics   AccountMetric[]
-  collectionJobs   CollectionJob[]
-
+  @@unique([igUsername]) // <-- YENİ: aynı hesap birden fazla kez eklenip
+  // birden fazla BullMQ job'ı oluşturulmasın diye
+  @@index([igUsername]) // sorgularda sık kullanılıyorsa
   @@map("tracked_accounts")
 }
 
@@ -50,6 +70,7 @@ model Post {
   postMetrics PostMetric[]
   comments    Comment[]
 
+  @@index([accountId]) // <-- YENİ
   @@map("posts")
 }
 
@@ -66,6 +87,7 @@ model PostMetric {
 
   post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
+  @@index([capturedAt]) // <-- YENİ: zaman bazlı sorgular için
   @@map("post_metrics")
 }
 
@@ -80,6 +102,8 @@ model AccountMetric {
 
   account TrackedAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
+  @@index([accountId]) // <-- YENİ
+  @@index([capturedAt]) // <-- YENİ
   @@map("account_metrics")
 }
 
@@ -93,6 +117,7 @@ model Comment {
 
   post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
+  @@index([postId]) // <-- YENİ
   @@map("comments")
 }
 
@@ -106,6 +131,7 @@ model AnalysisResult {
   modelVersion String   @map("model_version")
   createdAt    DateTime @default(now()) @map("created_at")
 
+  @@index([subjectType, subjectId]) // <-- YENİ: polymorphic lookup için
   @@map("analysis_results")
 }
 
@@ -121,6 +147,7 @@ model CollectionJob {
 
   account TrackedAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
+  @@index([accountId]) // <-- YENİ
   @@map("collection_jobs")
 }
 
@@ -135,5 +162,26 @@ model AuditLog {
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@index([userId]) // <-- YENİ
+  @@index([createdAt]) // <-- YENİ: tarih aralığı sorguları için
   @@map("audit_logs")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique // NOT: artık ham token değil, SHA-256 hash tutuyor
+  // (auth.service.ts'deki güncellemeyle uyumlu). İleride migration ile
+  // "tokenHash" olarak yeniden adlandırmayı düşünebilirsin, şimdilik
+  // service katmanındaki değişiklik yeterli, alan adı aynı kalabilir.
+  family    String
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([family])
+  @@index([userId]) // <-- YENİ
+  @@map("refresh_tokens")
 }

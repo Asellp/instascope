@@ -4,15 +4,11 @@ import { BullModule } from '@nestjs/bullmq';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AccountsModule } from './accounts/accounts.module';
-import { CollectorModule } from './collector/collector.module'; // <-- Yeni eklediğimiz modül
+import { CollectorModule } from './collector/collector.module';
+import { AuthModule } from './auth/auth.module'; // <-- Auth modülünü ekliyoruz
 
 @Module({
   imports: [
-    // .env dosyasını otomatik okuması için ConfigModule'ü projeye yüklüyoruz
-    // ConfigModule.forRoot({
-    //   isGlobal: true,
-    // }),
-
     // Docker üzerinde çalışan Redis bağlantısını yapılandırıyoruz
     BullModule.forRoot({
       connection: {
@@ -21,8 +17,9 @@ import { CollectorModule } from './collector/collector.module'; // <-- Yeni ekle
       },
     }),
 
+    AuthModule,     // <-- Güvenlik ve JWT modülünü buraya dahil ediyoruz
     AccountsModule,
-    CollectorModule, // <-- Kuyruk modülünü buraya dahil ediyoruz
+    CollectorModule,
   ],
   controllers: [AppController],
   providers: [AppService],
