@@ -418,7 +418,7 @@ def generate_dataset(total=2500):
 if __name__ == "__main__":
     comments = generate_dataset(2500)
 
-    output_path = "src/mock_comments.json"
+    output_path = "../src/ai/data/mock_comments.json"
     with open(output_path, "w", encoding="utf8") as f:
         json.dump(comments, f, ensure_ascii=False, indent=2)
 
