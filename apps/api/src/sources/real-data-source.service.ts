@@ -87,7 +87,8 @@ export class RealDataSourceService implements IDataSource {
         posts.push({
           id: post.id,
           caption: post.caption || '',
-          mediaType: post.media_type,
+          media_type: post.media_type, // <--- CollectorProcessor'ın yakalayabilmesi için bu şart!
+          mediaType: post.media_type,  // Mevcut yapılar bozulmasın diye bu da kalsın
           mediaUrl: post.media_url,
           permalink: post.permalink,
           timestamp: post.timestamp,

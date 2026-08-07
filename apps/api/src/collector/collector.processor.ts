@@ -71,13 +71,25 @@ export class CollectorProcessor extends WorkerHost {
           totalItemsCollected = realPostsResponse.data.length;
 
           for (const item of realPostsResponse.data) {
+            // Instagram medya tipini dinamik olarak belirle
+            let mediaType = 'IMAGE';
+            const rawType = item.media_type || item.postType;
+            if (rawType === 'CAROUSEL_ALBUM' || rawType === 'CAROUSEL' || item.children || item.carousel_media_count) {
+              mediaType = 'CAROUSEL';
+            } else if (rawType === 'VIDEO') {
+              mediaType = 'VIDEO';
+            }
+
             const savedPost = await this.prisma.post.upsert({
               where: { igMediaId: item.id },
-              update: { caption: item.caption },
+              update: { 
+                caption: item.caption,
+                type: mediaType, // Güncelleme durumunda tipin de güncellenmesi sağlandı
+              },
               create: {
                 accountId: account.id,
                 igMediaId: item.id,
-                type: 'IMAGE',
+                type: mediaType, // Dinamik tip atandı
                 caption: item.caption,
                 postedAt: new Date(item.timestamp || Date.now()),
                 permalink: item.permalink || `https://instagram.com/p/${item.id}`,

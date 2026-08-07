@@ -37,10 +37,21 @@ export class ApiDataMapper {
     // Basit bir etkileşim oranı (Engagement Rate) hesaplaması: (Beğeni + Yorum) / Erişim
     const engagementRate = reach > 0 ? (likes + commentsCount) / reach : 0;
 
+    // Medya tipini dinamik olarak belirle
+    let normalizedType = rawData.media_type || rawData.postType || 'UNKNOWN';
+    if (
+      normalizedType === 'CAROUSEL_ALBUM' || 
+      normalizedType === 'CAROUSEL' || 
+      rawData.children || 
+      rawData.carousel_media_count
+    ) {
+      normalizedType = 'CAROUSEL';
+    }
+
     // 3. Ortak Şemayı Döndür
     return {
       igMediaId: rawData.id,
-      type: rawData.media_type || 'UNKNOWN',
+      type: normalizedType,
       caption: rawData.caption || null,
       postedAt: rawData.timestamp ? new Date(rawData.timestamp) : new Date(),
       permalink: rawData.permalink || null,
