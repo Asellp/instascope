@@ -1,13 +1,26 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import cookieParser from 'cookie-parser';  // <-- YENİ SATIR
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app: any = await NestFactory.create(AppModule);
 
-  app.use(cookieParser());  // <-- YENİ SATIR
+  // CORS ve credentials ayarı (Frontend'den gelen çerez ve istekler için)
+  app.enableCors({
+    origin: [
+      'http://localhost:3000', 
+      'http://localhost:3001',
+      'http://127.0.01:3000',
+      'https://blurb-demanding-protrude.ngrok-free.dev'
+    ],
+    credentials: true,
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: 'Content-Type, Accept, Authorization',
+  });
+
+  app.use(cookieParser());
 
   // class-validator doğrulamalarını aktif et
   app.useGlobalPipes(
@@ -28,8 +41,14 @@ async function bootstrap() {
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('docs', app as any, document);
-
+  
+  // Swagger UI'ın tarayıcıdaki cookie'leri (credentials) isteklerde gönderebilmesi için:
+  SwaggerModule.setup('docs', app as any, document, {
+    swaggerOptions: {
+      persistAuthorization: true,
+      withCredentials: true,
+    },
+  });
   await app.listen(3000);
 }
 bootstrap();
