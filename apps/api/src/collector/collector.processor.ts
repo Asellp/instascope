@@ -3,6 +3,7 @@ import { Job } from 'bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealDataSourceService } from '../sources/real-data-source.service';
+import { CacheService } from '../cache/cache.service';
 import { SourceType } from '@prisma/client';
 
 @Processor('collect')
@@ -13,6 +14,7 @@ export class CollectorProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realDataSource: RealDataSourceService,
+    private readonly cacheService: CacheService,
   ) {
     super();
   }
@@ -26,8 +28,6 @@ export class CollectorProcessor extends WorkerHost {
 
     const accountId = job.data?.accountId;
 
-    // Hangi hesapların işleneceğini belirleyelim
-    // DEĞİŞTİ: 'api' string literal yerine SourceType.API enum değeri kullanılıyor.
     const accounts = accountId
       ? await this.prisma.trackedAccount.findMany({ where: { id: accountId, status: 'active' } })
       : await this.prisma.trackedAccount.findMany({
@@ -39,7 +39,6 @@ export class CollectorProcessor extends WorkerHost {
       return { success: true, message: 'No active accounts' };
     }
 
-    // Her bir aktif hesap için ayrı bir collection_jobs kaydı açıp süreci yürütelim
     for (const account of accounts) {
       const collectionJobRecord = await this.prisma.collectionJob.create({
         data: {
@@ -85,23 +84,32 @@ export class CollectorProcessor extends WorkerHost {
               },
             });
 
+            // Metrik değerlerini hazırlayalım
+            const likesCount = item.likesCount || 0;
+            const commentsCount = item.commentsCount || 0;
+            const reachCount = item.reach || 0;
+            const viewsCount = item.views || 0;
+            const engagementRate = likesCount + commentsCount;
+
             await this.prisma.postMetric.upsert({
               where: { postId: savedPost.id },
               update: {
-                likes: item.likesCount || 0,
-                commentsCount: item.commentsCount || 0,
+                likes: likesCount,
+                commentsCount: commentsCount,
+                reach: reachCount,
+                views: viewsCount,
+                engagementRate: engagementRate,
               },
               create: {
                 postId: savedPost.id,
-                likes: item.likesCount || 0,
-                commentsCount: item.commentsCount || 0,
-                views: 0,
-                reach: 0,
-                engagementRate: 0,
+                likes: likesCount,
+                commentsCount: commentsCount,
+                views: viewsCount,
+                reach: reachCount,
+                engagementRate: engagementRate,
               },
             });
 
-            // Her post için ayrı ayrı yorumları çekelim
             const commentsResponse = await this.realDataSource.fetchComments({
               accessToken: account.accessTokenEnc,
               igMediaId: item.id,
@@ -109,7 +117,6 @@ export class CollectorProcessor extends WorkerHost {
 
             if (commentsResponse && commentsResponse.data) {
               for (const commentItem of commentsResponse.data) {
-                // Önce aynı metne ve posta sahip yorum var mı diye bakalım
                 const existingComment = await this.prisma.comment.findFirst({
                   where: {
                     postId: savedPost.id,
@@ -118,7 +125,6 @@ export class CollectorProcessor extends WorkerHost {
                   },
                 });
 
-                // Eğer yoksa yeni olarak kaydedelim
                 if (!existingComment) {
                   await this.prisma.comment.create({
                     data: {
@@ -134,7 +140,6 @@ export class CollectorProcessor extends WorkerHost {
           }
         }
 
-        // Başarılı bittiğinde kaydı COMPLETED yapalım
         await this.prisma.collectionJob.update({
           where: { id: collectionJobRecord.id },
           data: {
@@ -143,6 +148,63 @@ export class CollectorProcessor extends WorkerHost {
             itemsCollected: totalItemsCollected,
           },
         });
+
+        // B3.5 - Hesap verisi güncellendi (yeni post/metric yazıldı),
+        // bu hesaba ait tüm overview cache kayıtlarını geçersiz kıl.
+        if (totalItemsCollected > 0) {
+          await this.cacheService.invalidatePattern(`overview:${account.id}:*`);
+          this.logger.log(`Cache invalidated: overview:${account.id}:*`);
+        }
+
+        // 1. Hesap Analiz Servisini Tetikle (Topics & Besttime)
+        try {
+          this.logger.log(`AI hesap analizi tetikleniyor (Account ID: ${account.id})...`);
+          await fetch(
+            process.env.AI_SERVICE_URL || 'http://localhost:8000/internal/analyze-account',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                accountId: account.id,
+                igUsername: account.igUsername,
+              }),
+            },
+          );
+          this.logger.log(`AI hesap analizi başarıyla tetiklendi: ${account.igUsername}`);
+        } catch (aiError: unknown) {
+          const aiErrMsg = aiError instanceof Error ? aiError.message : String(aiError);
+          this.logger.warn(`AI hesap analizi tetiklenirken hata oluştu: ${aiErrMsg}`);
+        }
+
+        // 2. Sentiment Analiz Servisini Tetikle (Toplu Yorum Gönderimi)
+        try {
+          const commentsToAnalyze = await this.prisma.comment.findMany({
+            where: { post: { accountId: account.id } },
+            select: { id: true, text: true },
+          });
+
+          if (commentsToAnalyze.length > 0) {
+            this.logger.log(`${commentsToAnalyze.length} yorum için Sentiment analizi tetikleniyor...`);
+
+            const sentimentUrl = process.env.AI_SERVICE_URL_SENTIMENT || 'http://localhost:8000/internal/analyze';
+
+            await fetch(sentimentUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                kind: 'sentiment',
+                comments: commentsToAnalyze.map((c) => ({
+                  comment_id: c.id,
+                  text: c.text,
+                })),
+              }),
+            });
+            this.logger.log('Sentiment analizi başarıyla tamamlandı ve kaydedildi.');
+          }
+        } catch (sentimentError: unknown) {
+          const sentErrMsg = sentimentError instanceof Error ? sentimentError.message : String(sentimentError);
+          this.logger.warn(`Sentiment analizi tetiklenirken hata oluştu: ${sentErrMsg}`);
+        }
 
         await this.wait(1000);
       } catch (error: unknown) {

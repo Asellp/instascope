@@ -62,16 +62,41 @@ export class RealDataSourceService implements IDataSource {
         access_token: accessToken,
       });
 
-      const posts = response.data.data.map((post: any) => ({
-        id: post.id,
-        caption: post.caption || '',
-        mediaType: post.media_type,
-        mediaUrl: post.media_url,
-        permalink: post.permalink,
-        timestamp: post.timestamp,
-        likesCount: post.like_count || 0,
-        commentsCount: post.comments_count || 0,
-      }));
+      const posts = [];
+      for (const post of response.data.data) {
+        let views = 0;
+        let reach = 0;
+
+        // Her post için ayrı ayrı Insights (sadece desteklenen reach) çekmeyi deneyelim
+        try {
+          const insightsRes = await this.fetchWithRetry(`https://graph.facebook.com/v18.0/${post.id}/insights`, {
+            metric: 'reach',
+            access_token: accessToken,
+          });
+
+          if (insightsRes && insightsRes.data && insightsRes.data.data) {
+            for (const metric of insightsRes.data.data) {
+              if (metric.name === 'reach') reach = metric.values?.[0]?.value || 0;
+            }
+          }
+        } catch (insightErr: any) {
+          // İzin veya medya türü kısıtlamasında akışın patlamaması için sessizce yakalıyoruz
+          this.logger.debug(`Post reach bilgisi alınamadı (Media ID: ${post.id})`);
+        }
+
+        posts.push({
+          id: post.id,
+          caption: post.caption || '',
+          mediaType: post.media_type,
+          mediaUrl: post.media_url,
+          permalink: post.permalink,
+          timestamp: post.timestamp,
+          likesCount: post.like_count || 0,
+          commentsCount: post.comments_count || 0,
+          views: views,
+          reach: reach,
+        });
+      }
 
       return {
         source: 'meta_api',
@@ -119,7 +144,6 @@ export class RealDataSourceService implements IDataSource {
         : error.message;
       
       this.logger.error(`Yorumlar çekilemedi (Media ID: ${igMediaId}) DETAY: ${detailedError}`);
-      // Yorum çekme hatası tüm akışı patlatmasın diye boş dizi dönebiliriz veya hatayı fırlatabiliriz
       return { source: 'meta_api', type: 'comments', data: [] };
     }
   }

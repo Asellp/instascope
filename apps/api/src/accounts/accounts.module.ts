@@ -7,7 +7,6 @@ import { PrismaModule } from '../prisma/prisma.module';
 @Module({
   imports: [
     PrismaModule,
-    // BURAYI EKLEMEMİZ GEREKİR:
     BullModule.registerQueue({
       name: 'collect',
     }),

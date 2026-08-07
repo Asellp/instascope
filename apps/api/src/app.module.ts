@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { AccountsModule } from './accounts/accounts.module';
 import { CollectorModule } from './collector/collector.module';
 import { AuthModule } from './auth/auth.module'; // <-- Auth modülünü ekliyoruz
+import { CacheModule } from './cache/cache.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { AuthModule } from './auth/auth.module'; // <-- Auth modülünü ekliyor
     AuthModule,     // <-- Güvenlik ve JWT modülünü buraya dahil ediyoruz
     AccountsModule,
     CollectorModule,
+    CacheModule,
   ],
   controllers: [AppController],
   providers: [AppService],

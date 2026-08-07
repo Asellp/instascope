@@ -5,24 +5,24 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   HttpCode,
   HttpStatus,
   UseGuards,
 } from '@nestjs/common';
 import { AccountsService } from './accounts.service';
 import { CreateAccountDto } from './dto/create-account.dto';
-import { AccountResponseDto } from './dto/response-account.dto';
+import { OverviewQueryDto } from './dto/overview-query.dto';
+import { PostsQueryDto } from './dto/posts-query.dto';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '@prisma/client';
-import { plainToInstance } from 'class-transformer';
 
 @ApiTags('accounts')
 @ApiBearerAuth()
-// Tüm controller artık JWT ile korunuyor - önceden hiç guard yoktu,
-// kimlik doğrulaması olmadan hesap ekleme/silme/listeleme mümkündü.
+// Tüm controller artık JWT ile korunuyor.
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('accounts')
 export class AccountsController {
@@ -34,14 +34,12 @@ export class AccountsController {
     return this.accountsService.create(createAccountDto);
   }
 
+  // Sadece ADMIN rolüne sahip kullanıcılar tüm hesapları listeleyebilir.
+  @Roles(Role.ADMIN)
   @Get()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.ADMIN)
-  async findAll() {
-    const accounts = await this.accountsService.findAll();
-    return plainToInstance(AccountResponseDto, accounts, {
-      excludeExtraneousValues: false,
-    });
+  findAll() {
+    return this.accountsService.findAll();
   }
 
   @Get(':id')
@@ -58,16 +56,49 @@ export class AccountsController {
 
   @Get(':id/posts')
   @HttpCode(HttpStatus.OK)
-  getAccountPosts(@Param('id') id: string) {
-    return this.accountsService.getAccountPosts(id);
+  getAccountPosts(@Param('id') id: string, @Query() query: PostsQueryDto) {
+    return this.accountsService.getAccountPosts(id, query);
   }
 
-  // Silme işlemi ekstra kritik - sadece ADMIN rolü yapabilsin.
-  // RolesGuard zaten kurulmuştu ama hiçbir yerde kullanılmıyordu, ilk kullanımı burada.
+  // B3.1 - GET /accounts/:id/overview?range=7d|30d|90d
+  // Takipçi büyümesi, ortalama etkileşim, gönderi sıklığı.
+  @Get(':id/overview')
+  @HttpCode(HttpStatus.OK)
+  getAccountOverview(
+    @Param('id') id: string,
+    @Query() query: OverviewQueryDto,
+  ) {
+    return this.accountsService.getOverview(id, query.range);
+  }
+
+  // B3.3 - GET /accounts/:id/sentiment
+  // Post bazlı yorum sentiment dağılımı (AI'nin analysis_results'a
+  // yazdığı kind: "sentiment" kayıtlarına dayanıyor).
+  @Get(':id/sentiment')
+  @HttpCode(HttpStatus.OK)
+  getSentimentBreakdown(@Param('id') id: string) {
+    return this.accountsService.getSentimentBreakdown(id);
+  }
+
+  // B3.3 - GET /accounts/:id/hashtags
+  // Hesaba ait hashtag analiz sonuçları (AI'nin analysis_results'a
+  // yazdığı kind: "hashtag-analysis" kayıtlarına dayanıyor).
+  @Get(':id/hashtags')
+  @HttpCode(HttpStatus.OK)
+  getHashtagAnalysis(@Param('id') id: string) {
+    return this.accountsService.getHashtagAnalysis(id);
+  }
+
+  // Silme işlemi - sadece ADMIN rolü yapabilir.
   @Roles(Role.ADMIN)
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   remove(@Param('id') id: string) {
     return this.accountsService.remove(id);
+  }
+
+  @Get(':id/best-times')
+  async getBestTimes(@Param('id') id: string) {
+    return this.accountsService.getBestTimes(id);
   }
 }

@@ -11,13 +11,9 @@ describe('AccountsController (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaClient;
   let createdAccountId: string;
-  // DEĞİŞTİ: Bu endpoint'ler artık JwtAuthGuard + RolesGuard ile korunuyor.
-  // Silme işlemi ADMIN rolü gerektirdiği için, testte gerçek bir admin
-  // kullanıcı oluşturup onunla login olmamız gerekiyor.
+
   const adminEmail = `test_admin_${Date.now()}@example.com`;
   const adminPassword = 'StrongPassword123!';
-  // supertest agent: cookie'leri istekler arasında otomatik taşır,
-  // elle Set-Cookie parse etmemize gerek kalmaz.
   let agent: ReturnType<typeof request.agent>;
 
   beforeAll(async () => {
@@ -38,9 +34,6 @@ describe('AccountsController (e2e)', () => {
 
     prisma = new PrismaClient();
 
-    // Register endpoint'i her zaman USER rolü atadığı için (güvenlik amaçlı,
-    // kendi kendini admin yapamamalı), admin kullanıcıyı doğrudan DB'ye,
-    // gerçek AuthService'teki ile aynı hash algoritmasıyla oluşturuyoruz.
     const passwordHash = await argon2id({
       password: adminPassword,
       salt: crypto.randomBytes(16),
@@ -66,24 +59,18 @@ describe('AccountsController (e2e)', () => {
   });
 
   afterAll(async () => {
-    // Test verisini temizle: hem oluşturulan hesabı (varsa) hem admin kullanıcıyı.
     if (createdAccountId) {
       await prisma.trackedAccount
         .delete({ where: { id: createdAccountId } })
-        .catch(() => {
-          // Test içinde zaten silinmiş olabilir, sorun değil.
-        });
+        .catch(() => {});
     }
     await prisma.user.deleteMany({ where: { email: adminEmail } });
     await prisma.$disconnect();
     await app.close();
   });
 
-  // 1. POST /accounts (Hesap Oluşturma Testi)
+  // 1. POST /accounts (Hesap Oluşturma)
   it('/accounts (POST) - Başarılı hesap eklemeli', async () => {
-    // DEĞİŞTİ: sourceType artık enum, 'instagram' geçersizdi (API/SCRAPE/MOCK/AI
-    // dışında bir değer @IsEnum tarafından reddedilir). Ayrıca DTO'da alan adı
-    // 'username', 'igUsername' değil.
     const response = await (agent.post('/accounts') as any).send({
       username: 'test_user',
       sourceType: 'API',
@@ -95,18 +82,40 @@ describe('AccountsController (e2e)', () => {
     createdAccountId = response.body.id;
   });
 
-  // 2. GET /accounts (Hesapları Listeleme Testi)
+  // 2. GET /accounts (Hesap Listeleme)
   it('/accounts (GET) - Hesap listesini dönmeli', async () => {
     await (agent.get('/accounts') as any).expect(200);
   });
 
-  // 3. DELETE /accounts/:id (Hesap Silme Testi) - ADMIN rolü gerektirir
-  it('/accounts/:id (DELETE) - Oluşturulan hesabı silmeli', async () => {
+  // 3. GET /accounts/:id/overview (Overview Analitiği)
+  it('/accounts/:id/overview (GET) - Hesap overview verisini dönmeli', async () => {
+    if (!createdAccountId) return;
+
+    const response = await (
+      agent.get(`/accounts/${createdAccountId}/overview?range=30d`) as any
+    ).expect(200);
+
+    expect(response.body).toHaveProperty('accountId', createdAccountId);
+    expect(response.body).toHaveProperty('followerGrowth');
+    expect(response.body).toHaveProperty('averageEngagementRate');
+  });
+
+  // 4. GET /accounts/:id/sentiment (Sentiment Analizi)
+  it('/accounts/:id/sentiment (GET) - Sentiment dökümünü dönmeli', async () => {
+    if (!createdAccountId) return;
+
+    const response = await (
+      agent.get(`/accounts/${createdAccountId}/sentiment`) as any
+    ).expect(200);
+
+    expect(Array.isArray(response.body)).toBe(true);
+  });
+
+  // 5. DELETE /accounts/:id (Hesap Silme) - ADMIN rolü gerektirir
+  it('/accounts/:id/DELETE - Oluşturulan hesabı silmeli', async () => {
     if (!createdAccountId) return;
 
     await (agent.delete(`/accounts/${createdAccountId}`) as any).expect(200);
-
-    // Silindiğini teyit ettikten sonra afterAll'da tekrar silmeye çalışmasın.
     createdAccountId = '';
   });
 });
