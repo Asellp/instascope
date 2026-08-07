@@ -3,6 +3,7 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:16
@@ -25,6 +26,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/instascope_db?schema=public
       REDIS_URL: redis://localhost:6379
+      JWT_SECRET: test_jwt_secret_for_ci_only_not_for_production
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
