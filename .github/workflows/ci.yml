@@ -36,4 +36,4 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: npx prisma migrate deploy
-      - run: pnpm exec jest --config ./test/jest-e2e.json --runInBand --coverage
+      - run: pnpm exec jest --config ./test/jest-e2e.json --runInBand --coverage --forceExit
