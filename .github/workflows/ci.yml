@@ -56,7 +56,7 @@ jobs:
 
       - name: Docker imajını build et
         working-directory: apps/ai
-        run: docker build -t my-app-image:latest -f Dockerfile .
+        run: docker build --no-cache -t my-app-image:latest -f Dockerfile .
 
       - name: Trivy ile imaj taraması yap
         uses: aquasecurity/trivy-action@master
