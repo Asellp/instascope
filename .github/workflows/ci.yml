@@ -55,8 +55,7 @@ jobs:
           pip-audit --format json --output pip-audit-report.json || true
 
       - name: Docker imajını build et
-        working-directory: apps/ai
-        run: docker build --no-cache -t my-app-image:latest -f Dockerfile .
+        run: docker build --no-cache -t my-app-image:latest -f apps/ai/Dockerfile .
 
       - name: Trivy ile imaj taraması yap
         uses: aquasecurity/trivy-action@master
