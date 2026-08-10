@@ -42,12 +42,15 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
 
-      - name: API Paketlerini Yükle ve Test Et
-        working-directory: apps/api
-        run: |
-          pnpm install --frozen-lockfile
-          npx prisma migrate deploy
-          pnpm exec jest --config ./test/jest-e2e.json --runInBand --coverage --forceExit
+      - run: pnpm install --frozen-lockfile
+
+      - name: Bağımlılık Güvenlik Denetimi (pnpm audit)
+        run: pnpm audit --prod --audit-level=high
+        continue-on-error: true
+
+      - run: npx prisma migrate deploy
+
+      - run: pnpm exec jest --config ./test/jest-e2e.json --runInBand --coverage --forceExit
 
       - name: Python bağımlılıklarını tarat (pip-audit)
         run: |
@@ -55,10 +58,7 @@ jobs:
           pip-audit --format json --output pip-audit-report.json || true
 
       - name: Docker imajını build et
-        run: |
-          echo "Dosyaları kontrol ediyorum:"
-          ls -la apps/api
-          docker build -t my-app-image:latest -f apps/api/Dockerfile apps/api
+        run: docker build -t my-app-image:latest .
 
       - name: Trivy ile imaj taraması yap
         uses: aquasecurity/trivy-action@master
