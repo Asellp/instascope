@@ -21,8 +21,6 @@ COPY src/ ./src/
 
 RUN uv sync --frozen --no-cache
 
-COPY notebooks/ ./notebooks/
-
 EXPOSE 8000
 
 # Sağlık kontrolü
