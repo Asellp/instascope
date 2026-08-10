@@ -1,5 +1,7 @@
 name: CI
+
 on: [push, pull_request]
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -11,7 +13,8 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: instascope_db
-        ports: ["5432:5432"]
+        ports:
+          - "5432:5432"
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -19,23 +22,63 @@ jobs:
           --health-retries 5
       redis:
         image: redis:alpine
-        ports: ["6379:6379"]
+        ports:
+          - "6379:6379"
+
     defaults:
       run:
         working-directory: apps/api
+
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/instascope_db?schema=public
       REDIS_URL: redis://localhost:6379
       JWT_SECRET: test_jwt_secret_for_ci_only_not_for_production
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: pnpm/action-setup@v4
         with:
           version: 11
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'pnpm'
+
       - run: pnpm install --frozen-lockfile
+
+      - name: Bağımlılık Güvenlik Denetimi (pnpm audit)
+        run: pnpm audit --prod --audit-level=high
+        continue-on-error: true
+
       - run: npx prisma migrate deploy
+
       - run: pnpm exec jest --config ./test/jest-e2e.json --runInBand --coverage --forceExit
+
+      - name: Python bağımlılıklarını tarat (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit --format json --output pip-audit-report.json || true
+        working-directory: .
+
+      - name: Docker imajını build et
+        run: docker build -t my-app-image:latest .
+        working-directory: .
+
+      - name: Trivy ile imaj taraması yap
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'my-app-image:latest'
+          format: 'json'
+          output: 'trivy-report.json'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+      - name: Tarama raporlarını artifact olarak kaydet
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            pip-audit-report.json
+            trivy-report.json
