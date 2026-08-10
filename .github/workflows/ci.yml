@@ -64,7 +64,7 @@ jobs:
 
       - name: Docker imajını build et
         run: docker build -t my-app-image:latest .
-        working-directory: .
+        # working-directory satırını kaldırarak apps/api içindeki Dockerfile'ı doğrudan kullanmasını sağlıyoruz
 
       - name: Trivy ile imaj taraması yap
         uses: aquasecurity/trivy-action@master
@@ -80,5 +80,5 @@ jobs:
         with:
           name: security-reports
           path: |
-            pip-audit-report.json
-            trivy-report.json
+            apps/api/pip-audit-report.json
+            apps/api/trivy-report.json
