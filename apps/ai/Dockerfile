@@ -15,9 +15,12 @@ WORKDIR /app
 # UV paket yöneticisini çekme
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
-# Bağımlılıkları kopyala ve yükle
-COPY pyproject.toml uv.lock README.md ./
-COPY src/ ./src/
+# Bağımlılıkları kopyala ve yükle (apps/ai altındaki dosyalardan kopyalıyoruz)
+COPY apps/ai/pyproject.toml apps/ai/uv.lock apps/ai/README.md ./
+COPY apps/ai/src/ ./src/
+
+# Eğer notebooks klasörü apps/ai altındaysa:
+COPY apps/ai/notebooks/ ./notebooks/
 
 RUN uv sync --frozen --no-cache
 
