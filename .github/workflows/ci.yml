@@ -1,7 +1,6 @@
 name: CI
 
 on: [push, pull_request]
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -55,7 +54,7 @@ jobs:
           pip-audit --format json --output pip-audit-report.json || true
 
       - name: Docker imajını build et
-        run: docker build -t my-app-image:latest -f apps/api/Dockerfile apps/api
+        run: docker build --no-cache -t my-app-image:latest -f apps/ai/Dockerfile .
 
       - name: Trivy ile imaj taraması yap
         uses: aquasecurity/trivy-action@master
