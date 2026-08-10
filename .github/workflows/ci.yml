@@ -63,9 +63,8 @@ jobs:
         working-directory: .
 
       - name: Docker imajını build et
-        run: docker build -t my-app-image:latest -f ../../Dockerfile ../..
-        # Not: Eğer Dockerfile projenin tam kök dizindeyse -f ../../Dockerfile ../.. komutu
-        # apps/api içinden çıkıp kök dizindeki Dockerfile'ı sorunsuz şekilde bulur.
+        run: docker build -t my-app-image:latest .
+        working-directory: .
 
       - name: Trivy ile imaj taraması yap
         uses: aquasecurity/trivy-action@master
