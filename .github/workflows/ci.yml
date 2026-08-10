@@ -58,13 +58,14 @@ jobs:
 
       - name: Python bağımlılıklarını tarat (pip-audit)
         run: |
+          cd ../..
           pip install pip-audit
           pip-audit --format json --output pip-audit-report.json || true
-        working-directory: .
 
       - name: Docker imajını build et
-        run: docker build -t my-app-image:latest .
-        working-directory: .
+        run: |
+          cd ../..
+          docker build -t my-app-image:latest .
 
       - name: Trivy ile imaj taraması yap
         uses: aquasecurity/trivy-action@master
@@ -80,5 +81,5 @@ jobs:
         with:
           name: security-reports
           path: |
-            pip-audit-report.json
-            trivy-report.json
+            apps/api/pip-audit-report.json
+            apps/api/trivy-report.json
