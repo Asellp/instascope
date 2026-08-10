@@ -55,7 +55,7 @@ jobs:
           pip-audit --format json --output pip-audit-report.json || true
 
       - name: Docker imajını build et
-        run: docker build -t my-app-image:latest -f apps/api/Dockerfile apps/api
+        run: docker build -t my-app-image:latest -f apps/ai/Dockerfile apps/ai
 
       - name: Trivy ile imaj taraması yap
         uses: aquasecurity/trivy-action@master
