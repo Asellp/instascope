@@ -89,6 +89,10 @@ export class AccountsController {
     return this.accountsService.getHashtagAnalysis(id);
   }
 
+  @Get(':id/topics')
+  getTopics(@Param('id') id: string) {
+  return this.accountsService.getTopicsAnalysis(id);
+  }
   // Silme işlemi - sadece ADMIN rolü yapabilir.
   @Roles(Role.ADMIN)
   @Delete(':id')

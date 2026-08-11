@@ -17,7 +17,7 @@ async function bootstrap() {
     ],
     credentials: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    allowedHeaders: 'Content-Type, Accept, Authorization',
+    allowedHeaders: 'Content-Type, Accept, Authorization, ngrok-skip-browser-warning',
   });
 
   app.use(cookieParser());
