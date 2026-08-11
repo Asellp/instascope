@@ -8,6 +8,7 @@ import { OverviewRange } from './dto/overview-query.dto';
 import { PostsQueryDto } from './dto/posts-query.dto';
 import { AccountOverviewResponse } from './interfaces/account-overview.interface';
 import { CacheService } from '../cache/cache.service';
+import { TokenEncryptionService } from '../common/encryption/token-encryption.service';
 import {
   PostSentimentBreakdown,
   SentimentLabel,
@@ -33,6 +34,9 @@ export class AccountsService {
     private readonly prisma: PrismaService,
     @InjectQueue('collect') private readonly collectQueue: Queue,
     private readonly cacheService: CacheService,
+    // S2.2 - Instagram access token'larını DB'ye yazmadan önce şifrelemek,
+    // okurken çözmek için.
+    private readonly tokenEncryption: TokenEncryptionService,
   ) {}
 
   async create(dto: CreateAccountDto) {
@@ -42,6 +46,12 @@ export class AccountsService {
         sourceType: dto.sourceType,
         scheduleCron: dto.frequency === 'daily' ? '0 0 * * *' : '*/5 * * * *',
         status: 'collecting',
+        // DEĞİŞTİ: Önceden client'tan gelen token düz metin olarak
+        // kaydediliyordu (alan adı "Enc" olsa bile şifreleme yoktu).
+        // Artık kaydetmeden önce envelope encryption ile şifreleniyor.
+        accessTokenEnc: dto.accessTokenEnc
+          ? this.tokenEncryption.encrypt(dto.accessTokenEnc)
+          : null,
       },
     });
 
@@ -71,6 +81,17 @@ export class AccountsService {
       throw new NotFoundException('Hesap bulunamadı');
     }
     return account;
+  }
+
+  // S2.2 - Bir hesabın gerçek (çözülmüş) access token'ına ihtiyaç duyan
+  // yerler (örn. collector, gerçek Instagram API çağrıları) için tek,
+  // merkezi bir metod. Şifre çözme mantığı sadece burada yaşıyor.
+  async getDecryptedAccessToken(accountId: string): Promise<string | null> {
+    const account = await this.findOne(accountId);
+    if (!account.accessTokenEnc) {
+      return null;
+    }
+    return this.tokenEncryption.decrypt(account.accessTokenEnc);
   }
 
   async getAccountMetrics(accountId: string) {
@@ -359,6 +380,20 @@ export class AccountsService {
       avgEngagement: item.score ?? 0,
     }));
   }
+  async getTopicsAnalysis(accountId: string) {
+  await this.findOne(accountId);
+  const analysisResult = await this.prisma.analysisResult.findFirst({
+    where: {
+      subjectId: accountId,
+      kind: 'topics',
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (!analysisResult || !analysisResult.payload) {
+    return { status: 'no_data', total_topics: 0, topics: [] };
+  }
+  return analysisResult.payload;
+}
 
   async getBestTimes(accountId: string) {
     await this.findOne(accountId);
