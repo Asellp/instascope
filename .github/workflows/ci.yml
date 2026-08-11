@@ -1,7 +1,5 @@
 name: CI
-
 on: [push, pull_request]
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -30,25 +28,38 @@ jobs:
       JWT_SECRET: test_jwt_secret_for_ci_only_not_for_production
     steps:
       - uses: actions/checkout@v4
+
       - uses: pnpm/action-setup@v4
         with:
           version: 11
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'pnpm'
+
       - name: API Paketlerini Yükle, Migrate Et ve Test Et
         working-directory: apps/api
         run: |
           pnpm install --frozen-lockfile
           npx prisma migrate deploy --schema=./prisma/schema.prisma
           pnpm exec jest --config ./test/jest-e2e.json --runInBand --coverage --forceExit
+
+      - name: pnpm audit (Node.js bağımlılık taraması)
+        working-directory: apps/api
+        run: pnpm audit --audit-level=high
+
       - name: Python bağımlılıklarını tarat (pip-audit)
+        working-directory: apps/ai
         run: |
-          pip install pip-audit
-          pip-audit --format json --output pip-audit-report.json || true
+          pip install uv
+          uv sync --frozen
+          uv run pip-audit --format json --output pip-audit-report.json
+          uv run pip-audit
+
       - name: Docker imajını build et
         run: docker build --no-cache -t my-app-image:latest -f apps/ai/Dockerfile apps/ai
+
       - name: Trivy ile imaj taraması yap
         uses: aquasecurity/trivy-action@master
         with:
@@ -56,11 +67,14 @@ jobs:
           format: 'json'
           output: 'trivy-report.json'
           severity: 'CRITICAL,HIGH'
-          exit-code: '0'
+          ignore-unfixed: 'true'
+          exit-code: '1'
+
       - name: Tarama raporlarını artifact olarak kaydet
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
           path: |
-            pip-audit-report.json
+            apps/ai/pip-audit-report.json
             trivy-report.json
