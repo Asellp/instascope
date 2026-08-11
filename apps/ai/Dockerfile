@@ -26,6 +26,9 @@ COPY src/ ./src/
 
 RUN uv sync --frozen --no-cache
 
+# Wheel paketini açıkça güvenli sürüme zorla (Build/Environment açıklarını kapatmak için)
+RUN /app/.venv/bin/pip install --no-cache-dir "wheel>=0.46.2"
+
 EXPOSE 8000
 
 # Sağlık kontrolü
