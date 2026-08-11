@@ -3,11 +3,16 @@ FROM python:3.11-slim
 # Güvenlik için non-root kullanıcı oluşturma
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
-# 1. Sistem paketlerini güncelle
-# 2. HEALTHCHECK için curl ve derleme için build-essential yükle
+# 1. Sistem paketlerini güncelle ve High/Critical CVE'li paketleri en son sürüme yükselt/yükle
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    perl \
+    perl-base \
+    perl-modules \
+    libarchive-tar-perl \
+    patch \
+    passwd \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
