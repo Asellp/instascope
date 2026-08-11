@@ -26,6 +26,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/instascope_db?schema=public
       REDIS_URL: redis://localhost:6379
       JWT_SECRET: test_jwt_secret_for_ci_only_not_for_production
+      TOKEN_ENCRYPTION_MASTER_KEY: dGVzdF9tYXN0ZXJfa2V5X2Zvcl9jaV9vbmx5X2F0X2xlYXN0XzMyX2J5dGVzX2xvbmc= # <-- Bu satırı ekleproduction
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
