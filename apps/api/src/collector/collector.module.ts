@@ -12,6 +12,7 @@ import { MockDataSourceService } from '../sources/mock-data-source.service';
 import { AiDataSourceService } from '../sources/ai-data-source.service'; // <--- Eksik olan servis eklendi
 import { PrismaModule } from '../prisma/prisma.module';
 import { CacheModule } from '../cache/cache.module';
+import { TokenEncryptionModule } from 'src/common/encryption/token-encryption.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { CacheModule } from '../cache/cache.module';
       name: 'collect',
       adapter: BullMQAdapter,
     }),
+    TokenEncryptionModule,
   ],
   providers: [
     CollectorProcessor,

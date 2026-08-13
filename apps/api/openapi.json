@@ -122,7 +122,6 @@
     "/accounts": {
       "post": {
         "operationId": "AccountsController_create",
-        "summary": "Yeni hesap ekle",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -600,6 +599,11 @@
           "accessTokenEnc": {
             "type": "string",
             "description": "İsteğe bağlı erişim anahtarı"
+          },
+          "igAccountId": {
+            "type": "string",
+            "description": "Instagram Business Hesap ID (Opsiyonel / Otomatik veya Manuel)",
+            "example": "178414**********"
           }
         },
         "required": [

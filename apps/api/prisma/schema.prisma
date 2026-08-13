@@ -15,12 +15,15 @@ model User {
   createdAt     DateTime       @default(now()) @map("created_at")
   auditLogs     AuditLog[]
   refreshTokens RefreshToken[]
+  trackedAccounts TrackedAccount[] //yeni
 
   @@map("users")
 }
 
 model TrackedAccount {
   id             String          @id @default(uuid())
+  userId         String         @map("user_id") // yeni
+  user           User           @relation(fields: [userId], references: [id]) //yeni
   igUsername     String          @unique @map("ig_username")
   sourceType     SourceType      @map("source_type")
   accessTokenEnc String?         @map("access_token_enc")

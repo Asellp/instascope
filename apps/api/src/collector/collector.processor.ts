@@ -9,6 +9,7 @@ import { ApiDataMapper } from '../common/mappers/api-data.mapper';
 import { ScrapeDataMapper } from '../common/mappers/scrape-data.mapper';
 import { MockDataMapper } from '../common/mappers/mock-data.mapper';
 import { NormalizedPost } from '../common/mappers/normalized-post.interface';
+import { TokenEncryptionService } from '../common/encryption/token-encryption.service'; // Token şifre çözme servisi
 
 @Processor('collect')
 @Injectable()
@@ -19,6 +20,7 @@ export class CollectorProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly dataSourceFactory: DataSourceFactory,
     private readonly cacheService: CacheService,
+    private readonly tokenEncryption: TokenEncryptionService, // Ekledik
   ) {
     super();
   }
@@ -44,6 +46,16 @@ export class CollectorProcessor extends WorkerHost {
     }
 
     for (const account of accounts) {
+      // Veritabanındaki şifreli token'ı burada çözüyoruz!
+      let decryptedAccessToken = account.accessTokenEnc;
+      if (account.accessTokenEnc) {
+        try {
+          decryptedAccessToken = this.tokenEncryption.decrypt(account.accessTokenEnc);
+        } catch (e) {
+          this.logger.error(`Token çözülemedi (Account ID: ${account.id})`);
+        }
+      }
+
       const collectionJobRecord = await this.prisma.collectionJob.create({
         data: {
           accountId: account.id,
@@ -56,7 +68,7 @@ export class CollectorProcessor extends WorkerHost {
         if (!account.igAccountId) {
           throw new Error('Eksik Parametre: igAccountId tanımlı değil.');
         }
-        // Kaynak tipini belirle (Prisma SourceType enum değerini lowercase string'e çeviriyoruz: API -> real, vb.)
+        
         const rawSourceType = account.sourceType ? account.sourceType.toLowerCase() : 'real';
         const sourceTypeKey = rawSourceType === 'api' ? 'real' : rawSourceType; 
         
@@ -64,9 +76,9 @@ export class CollectorProcessor extends WorkerHost {
 
         this.logger.log(`Hesap işleniyor: ${account.igUsername} (ID: ${account.id}) - Kaynak: ${sourceTypeKey}`);
 
-        // Veriyi seçilen kaynaktan çek
+        // Veriyi çözülmüş token ile çek
         const rawPostsResponse = await dataSource.fetchPosts({
-          accessToken: account.accessTokenEnc,
+          accessToken: decryptedAccessToken,
           igAccountId: account.igAccountId,
           platform: account.igUsername,
         });
@@ -76,7 +88,6 @@ export class CollectorProcessor extends WorkerHost {
         totalItemsCollected = postsList.length;
 
         for (const item of postsList) {
-          // Doğru mapper'ı kullanarak veriyi ortak formata (NormalizedPost) dönüştür
           let normalizedPost: NormalizedPost;
           
           if (sourceTypeKey === 'real') {
@@ -89,7 +100,6 @@ export class CollectorProcessor extends WorkerHost {
 
           if (!normalizedPost.igMediaId) continue;
 
-          // Medya tipini normalize et
           let mediaType = 'IMAGE';
           const rawType = normalizedPost.type?.toUpperCase();
           if (rawType === 'CAROUSEL_ALBUM' || rawType === 'CAROUSEL') {
@@ -114,7 +124,6 @@ export class CollectorProcessor extends WorkerHost {
             },
           });
 
-          // Metrikleri kaydet
           const likesCount = normalizedPost.metrics?.likes || 0;
           const commentsCount = normalizedPost.metrics?.commentsCount || 0;
           const reachCount = normalizedPost.metrics?.reach || 0;
@@ -140,15 +149,12 @@ export class CollectorProcessor extends WorkerHost {
             },
           });
 
-          // Yorumları işle
           let commentsData = normalizedPost.comments;
-          //this.logger.debug(`Post ID (${savedPost.igMediaId}) için mapper'dan gelen yorum sayısı: ${commentsData?.length || 0}`);
-          //this.logger.debug(`Aktif kaynak tipi (sourceTypeKey): ${sourceTypeKey}`);
 
           if (!commentsData || (Array.isArray(commentsData) && commentsData.length === 0)) {
             try {
               const commentsResponse = await dataSource.fetchComments({
-                accessToken: account.accessTokenEnc,
+                accessToken: decryptedAccessToken, // Çözülmüş token kullanılıyor
                 igMediaId: normalizedPost.igMediaId,
               });
 
@@ -206,7 +212,6 @@ export class CollectorProcessor extends WorkerHost {
           this.logger.log(`Cache invalidated: overview:${account.id}:*`);
         }
 
-        // Hesap seviyesindeki metrikleri kaydet (AccountMetric)
         try {
           let followersCount = 0;
           let followingCount = 0;
@@ -216,7 +221,7 @@ export class CollectorProcessor extends WorkerHost {
 
           if (typeof profileFunc === 'function') {
             const profileResult = await profileFunc.call(dataSource, {
-              accessToken: account.accessTokenEnc,
+              accessToken: decryptedAccessToken, // Çözülmüş token kullanılıyor
               igAccountId: account.igAccountId,
               platform: account.igUsername,
             });
@@ -238,8 +243,7 @@ export class CollectorProcessor extends WorkerHost {
           await this.prisma.accountMetric.deleteMany({
             where: { accountId: accountId },
           });
-          // Önce bu hesaba ait bugünkü/en son kaydı bulmaya çalışalım veya direkt yeni kayıt atalım
-          // Her seferinde yeni kayıt oluşturmak (Time-series / Tarihsel takip için en popüler yöntem):
+
           await this.prisma.accountMetric.create({
             data: {
               accountId: account.id,
@@ -256,7 +260,6 @@ export class CollectorProcessor extends WorkerHost {
           this.logger.warn(`AccountMetric kaydedilirken hata oluştu: ${metricErrMsg}`);
         }
 
-        // 1. Hesap Analiz Servisini Tetikle
         try {
           this.logger.log(`AI hesap analizi tetikleniyor (Account ID: ${account.id})...`);
           await fetch(
@@ -278,7 +281,6 @@ export class CollectorProcessor extends WorkerHost {
           this.logger.warn(`AI hesap analizi tetiklenirken hata oluştu: ${aiErrMsg}`);
         }
 
-        // 2. Sentiment Analiz Servisini Tetikle
         try {
           const commentsToAnalyze = await this.prisma.comment.findMany({
             where: { post: { accountId: account.id } },

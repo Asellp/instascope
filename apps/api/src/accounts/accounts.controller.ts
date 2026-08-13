@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { AccountsService } from './accounts.service';
 import { CreateAccountDto } from './dto/create-account.dto';
@@ -31,85 +32,96 @@ export class AccountsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Yeni hesap ekle' })
   @ApiResponse({
     status: 201,
     description: 'Hesap başarıyla oluşturuldu.',
-    type: AccountResponseDto, // Veya ilgili response DTO
+    type: AccountResponseDto,
   })
-  create(@Body() createAccountDto: CreateAccountDto) {
-    return this.accountsService.create(createAccountDto);
+  create(@Body() createAccountDto: CreateAccountDto, @Req() req: any) {
+    // JWT guard sayesinde req.user dolu gelir. Kullanıcının ID'sini buradan alıyoruz.
+    const userId = req.user.userId || req.user.id;
+    return this.accountsService.create(createAccountDto, userId);
   }
 
-  // Sadece ADMIN rolüne sahip kullanıcılar tüm hesapları listeleyebilir.
-  @Roles(Role.ADMIN)
+  // Kullanıcı admin ise tümünü, normal kullanıcı ise sadece kendi hesaplarını görür.
   @Get()
   @HttpCode(HttpStatus.OK)
-  findAll() {
-    return this.accountsService.findAll();
+  findAll(@Req() req: any) {
+    const user = req.user;
+    return this.accountsService.findAll(user.userId || user.id, user.role);
   }
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  findOne(@Param('id') id: string) {
-    return this.accountsService.findOne(id);
+  findOne(@Param('id') id: string, @Req() req: any) {
+    const user = req.user;
+    return this.accountsService.findOne(id, user.userId || user.id, user.role);
   }
 
   @Get(':id/metrics')
   @HttpCode(HttpStatus.OK)
-  getAccountMetrics(@Param('id') id: string) {
-    return this.accountsService.getAccountMetrics(id);
+  getAccountMetrics(@Param('id') id: string, @Req() req: any) {
+    const user = req.user;
+    return this.accountsService.getAccountMetrics(id, user.userId || user.id, user.role);
   }
 
   @Get(':id/posts')
   @HttpCode(HttpStatus.OK)
-  getAccountPosts(@Param('id') id: string, @Query() query: PostsQueryDto) {
-    return this.accountsService.getAccountPosts(id, query);
+  getAccountPosts(
+    @Param('id') id: string,
+    @Query() query: PostsQueryDto,
+    @Req() req: any,
+  ) {
+    const user = req.user;
+    return this.accountsService.getAccountPosts(id, query, user.userId || user.id, user.role);
   }
 
   // B3.1 - GET /accounts/:id/overview?range=7d|30d|90d
-  // Takipçi büyümesi, ortalama etkileşim, gönderi sıklığı.
   @Get(':id/overview')
   @HttpCode(HttpStatus.OK)
   getAccountOverview(
     @Param('id') id: string,
     @Query() query: OverviewQueryDto,
+    @Req() req: any,
   ) {
-    return this.accountsService.getOverview(id, query.range);
+    const user = req.user;
+    return this.accountsService.getOverview(id, query.range, user.userId || user.id, user.role);
   }
 
   // B3.3 - GET /accounts/:id/sentiment
-  // Post bazlı yorum sentiment dağılımı (AI'nin analysis_results'a
-  // yazdığı kind: "sentiment" kayıtlarına dayanıyor).
   @Get(':id/sentiment')
   @HttpCode(HttpStatus.OK)
-  getSentimentBreakdown(@Param('id') id: string) {
-    return this.accountsService.getSentimentBreakdown(id);
+  getSentimentBreakdown(@Param('id') id: string, @Req() req: any) {
+    const user = req.user;
+    return this.accountsService.getSentimentBreakdown(id, user.userId || user.id, user.role);
   }
 
   // B3.3 - GET /accounts/:id/hashtags
-  // Hesaba ait hashtag analiz sonuçları (AI'nin analysis_results'a
-  // yazdığı kind: "hashtag-analysis" kayıtlarına dayanıyor).
   @Get(':id/hashtags')
   @HttpCode(HttpStatus.OK)
-  getHashtagAnalysis(@Param('id') id: string) {
-    return this.accountsService.getHashtagAnalysis(id);
+  getHashtagAnalysis(@Param('id') id: string, @Req() req: any) {
+    const user = req.user;
+    return this.accountsService.getHashtagAnalysis(id, user.userId || user.id, user.role);
   }
 
   @Get(':id/topics')
-  getTopics(@Param('id') id: string) {
-  return this.accountsService.getTopicsAnalysis(id);
+  getTopics(@Param('id') id: string, @Req() req: any) {
+    const user = req.user;
+    return this.accountsService.getTopicsAnalysis(id, user.userId || user.id, user.role);
   }
+
   // Silme işlemi - sadece ADMIN rolü yapabilir.
   @Roles(Role.ADMIN)
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  remove(@Param('id') id: string) {
-    return this.accountsService.remove(id);
+  remove(@Param('id') id: string, @Req() req: any) {
+    const user = req.user;
+    return this.accountsService.remove(id, user.userId || user.id, user.role);
   }
 
   @Get(':id/best-times')
-  async getBestTimes(@Param('id') id: string) {
-    return this.accountsService.getBestTimes(id);
+  async getBestTimes(@Param('id') id: string, @Req() req: any) {
+    const user = req.user;
+    return this.accountsService.getBestTimes(id, user.userId || user.id, user.role);
   }
 }
