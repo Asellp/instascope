@@ -36,4 +36,12 @@ export class CreateAccountDto {
   @IsOptional()
   @IsString()
   accessTokenEnc?: string;
+
+  @ApiPropertyOptional({
+    description: 'Instagram Business Hesap ID (Opsiyonel / Otomatik veya Manuel)',
+    example: '178414**********',
+  })
+  @IsOptional()
+  @IsString()
+  igAccountId?: string;
 }

@@ -1,7 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { Prisma } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { OverviewRange } from './dto/overview-query.dto';
@@ -20,35 +20,58 @@ const RANGE_TO_DAYS: Record<OverviewRange, number> = {
   '30d': 30,
   '90d': 90,
 };
-// B3.5 - Redis cache TTL, range'e göre farklılaştırılmış.
-// Kısa aralıklar (7d) daha sık değişebilir/daha güncel kalması beklenir,
-// bu yüzden daha kısa TTL. Uzun aralıklar (90d) daha stabil, uzun TTL güvenli.
+
 const RANGE_TO_TTL_SECONDS: Record<OverviewRange, number> = {
   '7d': 60,     // 1 dakika
   '30d': 300,   // 5 dakika
   '90d': 900,   // 15 dakika
 };
+
 @Injectable()
 export class AccountsService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue('collect') private readonly collectQueue: Queue,
     private readonly cacheService: CacheService,
-    // S2.2 - Instagram access token'larını DB'ye yazmadan önce şifrelemek,
-    // okurken çözmek için.
     private readonly tokenEncryption: TokenEncryptionService,
   ) {}
 
-  async create(dto: CreateAccountDto) {
+  async create(dto: CreateAccountDto, userId: string) {
+    // Eğer igAccountId boş string veya null/undefined geldiyse null kabul et
+    let fetchedIgAccountId: string | null = 
+      dto.igAccountId && dto.igAccountId.trim() !== '' ? dto.igAccountId : null;
+
+    // Eğer igAccountId elde edilemediyse ve token varsa Meta'dan otomatik çekmeyi dene
+    if (!fetchedIgAccountId && dto.sourceType === 'API' && dto.accessTokenEnc) {
+      try {
+        // Önce kullanıcının sayfalarını ve bağlı Instagram hesaplarını çekiyoruz
+        const url = `https://graph.facebook.com/v18.0/me/accounts?fields=instagram_business_account{id},name&access_token=${dto.accessTokenEnc}`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        console.log('--- META SAYFALAR YANITI ---', JSON.stringify(data));
+
+        if (data.data && Array.isArray(data.data)) {
+          for (const page of data.data) {
+            if (page.instagram_business_account?.id) {
+              fetchedIgAccountId = page.instagram_business_account.id;
+              break;
+            }
+          }
+        }
+      } catch (error: any) {
+        console.error('--- META API HATA DETAYI ---', error);
+      }
+    }
+
     const account = await this.prisma.trackedAccount.create({
       data: {
+        userId,
         igUsername: dto.username,
         sourceType: dto.sourceType,
+        igAccountId: fetchedIgAccountId,
         scheduleCron: dto.frequency === 'daily' ? '0 0 * * *' : '*/5 * * * *',
-        status: 'collecting',
-        // DEĞİŞTİ: Önceden client'tan gelen token düz metin olarak
-        // kaydediliyordu (alan adı "Enc" olsa bile şifreleme yoktu).
-        // Artık kaydetmeden önce envelope encryption ile şifreleniyor.
+        status: 'active',
         accessTokenEnc: dto.accessTokenEnc
           ? this.tokenEncryption.encrypt(dto.accessTokenEnc)
           : null,
@@ -68,24 +91,33 @@ export class AccountsService {
 
     return account;
   }
-
-  async findAll() {
-    return this.prisma.trackedAccount.findMany();
+  // Admin tüm hesapları, normal kullanıcı sadece kendi hesaplarını görür
+  async findAll(userId: string, userRole: Role) {
+    if (userRole === Role.ADMIN) {
+      return this.prisma.trackedAccount.findMany();
+    }
+    return this.prisma.trackedAccount.findMany({
+      where: { userId },
+    });
   }
 
-  async findOne(id: string) {
+  // IDOR Korumalı findOne: Kullanıcı admin değilse ve hesap kendisine ait değilse hata fırlatır
+  async findOne(id: string, userId?: string, userRole?: Role) {
     const account = await this.prisma.trackedAccount.findUnique({
       where: { id },
     });
+    
     if (!account) {
       throw new NotFoundException('Hesap bulunamadı');
     }
+
+    if (userRole && userRole !== Role.ADMIN && userId && account.userId !== userId) {
+      throw new ForbiddenException('Bu hesabın verilerini görüntüleme yetkiniz yok');
+    }
+
     return account;
   }
 
-  // S2.2 - Bir hesabın gerçek (çözülmüş) access token'ına ihtiyaç duyan
-  // yerler (örn. collector, gerçek Instagram API çağrıları) için tek,
-  // merkezi bir metod. Şifre çözme mantığı sadece burada yaşıyor.
   async getDecryptedAccessToken(accountId: string): Promise<string | null> {
     const account = await this.findOne(accountId);
     if (!account.accessTokenEnc) {
@@ -94,8 +126,8 @@ export class AccountsService {
     return this.tokenEncryption.decrypt(account.accessTokenEnc);
   }
 
-  async getAccountMetrics(accountId: string) {
-    await this.findOne(accountId);
+  async getAccountMetrics(accountId: string, userId: string, userRole: Role) {
+    await this.findOne(accountId, userId, userRole);
 
     return this.prisma.accountMetric.findMany({
       where: { accountId },
@@ -103,15 +135,12 @@ export class AccountsService {
     });
   }
 
-  // B3.2 - Gönderi analitiği: cursor tabanlı sayfalama, sıralama ve içerik tipi filtresi
-  async getAccountPosts(accountId: string, query: PostsQueryDto) {
-    await this.findOne(accountId);
+  async getAccountPosts(accountId: string, query: PostsQueryDto, userId: string, userRole: Role) {
+    await this.findOne(accountId, userId, userRole);
 
     const { cursor, limit = 10, sortBy = 'date', sortOrder = 'desc', contentType } = query;
-
     const take = limit + 1;
 
-    // YENİ
     const whereClause: Prisma.PostWhereInput = {
       accountId,
       ...(contentType ? { type: contentType } : {}),
@@ -154,10 +183,9 @@ export class AccountsService {
     };
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
+  async remove(id: string, userId: string, userRole: Role) {
+    await this.findOne(id, userId, userRole);
 
-    // B3.5 - Hesap silinirken ilgili tüm cache'leri (7d, 30d, 90d vb.) invalidate et
     await this.cacheService.invalidatePattern(`overview:${id}:*`);
 
     try {
@@ -186,87 +214,88 @@ export class AccountsService {
   }
 
   async getOverview(
-  accountId: string,
-  range: OverviewRange = '30d',
-): Promise<AccountOverviewResponse> {
-  await this.findOne(accountId);
+    accountId: string,
+    range: OverviewRange = '30d',
+    userId: string,
+    userRole: Role,
+  ): Promise<AccountOverviewResponse> {
+    await this.findOne(accountId, userId, userRole);
 
-  // B3.5 - cache-aside: önce cache'e bak
-  const cacheKey = `overview:${accountId}:${range}`;
-  const cached = await this.cacheService.get<AccountOverviewResponse>(cacheKey);
-  if (cached) {
-    console.log(`[Cache HIT] Key: ${cacheKey}`);
-    return cached;
-  }
-  console.log(`[Cache MISS] Key: ${cacheKey}`);
+    const cacheKey = `overview:${accountId}:${range}`;
+    const cached = await this.cacheService.get<AccountOverviewResponse>(cacheKey);
+    if (cached) {
+      console.log(`[Cache HIT] Key: ${cacheKey}`);
+      return cached;
+    }
+    console.log(`[Cache MISS] Key: ${cacheKey}`);
 
-  const days = RANGE_TO_DAYS[range];
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - days);
+    const days = RANGE_TO_DAYS[range];
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
 
-  const [earliestMetric, latestMetric, engagementAgg, postCount] =
-    await Promise.all([
-      this.prisma.accountMetric.findFirst({
-        where: { accountId, capturedAt: { gte: startDate } },
-        orderBy: { capturedAt: 'asc' },
-      }),
-      this.prisma.accountMetric.findFirst({
-        where: { accountId },
-        orderBy: { capturedAt: 'desc' },
-      }),
-      this.prisma.postMetric.aggregate({
-        _avg: { engagementRate: true },
-        where: {
-          post: {
-            accountId,
-            postedAt: { gte: startDate },
+    const [earliestMetric, latestMetric, engagementAgg, postCount] =
+      await Promise.all([
+        this.prisma.accountMetric.findFirst({
+          where: { accountId, capturedAt: { gte: startDate } },
+          orderBy: { capturedAt: 'asc' },
+        }),
+        this.prisma.accountMetric.findFirst({
+          where: { accountId },
+          orderBy: { capturedAt: 'desc' },
+        }),
+        this.prisma.postMetric.aggregate({
+          _avg: { engagementRate: true },
+          where: {
+            post: {
+              accountId,
+              postedAt: { gte: startDate },
+            },
           },
-        },
-      }),
-      this.prisma.post.count({
-        where: { accountId, postedAt: { gte: startDate } },
-      }),
-    ]);
+        }),
+        this.prisma.post.count({
+          where: { accountId, postedAt: { gte: startDate } },
+        }),
+      ]);
 
-  const startFollowers = earliestMetric?.followers ?? 0;
-  const endFollowers = latestMetric?.followers ?? startFollowers;
-  const absoluteChange = endFollowers - startFollowers;
-  const percentChange =
-    startFollowers > 0
-      ? Number(((absoluteChange / startFollowers) * 100).toFixed(2))
-      : 0;
+    const startFollowers = earliestMetric?.followers ?? 0;
+    const endFollowers = latestMetric?.followers ?? startFollowers;
+    const absoluteChange = endFollowers - startFollowers;
+    const percentChange =
+      startFollowers > 0
+        ? Number(((absoluteChange / startFollowers) * 100).toFixed(2))
+        : 0;
 
-  const postsPerWeek = Number(((postCount / days) * 7).toFixed(2));
+    const postsPerWeek = Number(((postCount / days) * 7).toFixed(2));
 
-  const result: AccountOverviewResponse = {
-    accountId,
-    range,
-    followerGrowth: {
-      start: startFollowers,
-      end: endFollowers,
-      absoluteChange,
-      percentChange,
-    },
-    averageEngagementRate: Number(
-      (engagementAgg._avg.engagementRate ?? 0).toFixed(2),
-    ),
-    postFrequency: {
-      totalPosts: postCount,
-      postsPerWeek,
-    },
-  };
+    const result: AccountOverviewResponse = {
+      accountId,
+      range,
+      followerGrowth: {
+        start: startFollowers,
+        end: endFollowers,
+        absoluteChange,
+        percentChange,
+      },
+      averageEngagementRate: Number(
+        (engagementAgg._avg.engagementRate ?? 0).toFixed(2),
+      ),
+      postFrequency: {
+        totalPosts: postCount,
+        postsPerWeek,
+      },
+    };
 
-  // B3.5 - sonucu cache'e yaz, range'e göre TTL
-  await this.cacheService.set(cacheKey, result, RANGE_TO_TTL_SECONDS[range]);
+    await this.cacheService.set(cacheKey, result, RANGE_TO_TTL_SECONDS[range]);
 
-  return result;
-}
+    return result;
+  }
 
-  // B3.3 - Sentiment breakdown, post bazlı.
   async getSentimentBreakdown(
     accountId: string,
+    userId: string,
+    userRole: Role,
   ): Promise<PostSentimentBreakdown[]> {
-    await this.findOne(accountId);
+    await this.findOne(accountId, userId, userRole);
 
     const posts = await this.prisma.post.findMany({
       where: { accountId },
@@ -352,9 +381,8 @@ export class AccountsService {
     });
   }
 
-// B3.3 - Hashtag analizi ucu (Esnek versiyon)
-  async getHashtagAnalysis(accountId: string): Promise<HashtagAnalysis[]> {
-    await this.findOne(accountId);
+  async getHashtagAnalysis(accountId: string, userId: string, userRole: Role): Promise<HashtagAnalysis[]> {
+    await this.findOne(accountId, userId, userRole);
 
     const analysisResult = await this.prisma.analysisResult.findFirst({
       where: {
@@ -370,8 +398,6 @@ export class AccountsService {
 
     const payload = analysisResult.payload as any;
     const rawTopics = Array.isArray(payload.topics) ? payload.topics : [];
-
-    // Tüm topic'lerin içindeki keywords dizilerini tek bir listede birleştiriyoruz
     const allKeywords = rawTopics.flatMap((topic: any) => topic.keywords || []);
 
     return allKeywords.map((item: any) => ({
@@ -380,23 +406,24 @@ export class AccountsService {
       avgEngagement: item.score ?? 0,
     }));
   }
-  async getTopicsAnalysis(accountId: string) {
-  await this.findOne(accountId);
-  const analysisResult = await this.prisma.analysisResult.findFirst({
-    where: {
-      subjectId: accountId,
-      kind: 'topics',
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-  if (!analysisResult || !analysisResult.payload) {
-    return { status: 'no_data', total_topics: 0, topics: [] };
-  }
-  return analysisResult.payload;
-}
 
-  async getBestTimes(accountId: string) {
-    await this.findOne(accountId);
+  async getTopicsAnalysis(accountId: string, userId: string, userRole: Role) {
+    await this.findOne(accountId, userId, userRole);
+    const analysisResult = await this.prisma.analysisResult.findFirst({
+      where: {
+        subjectId: accountId,
+        kind: 'topics',
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!analysisResult || !analysisResult.payload) {
+      return { status: 'no_data', total_topics: 0, topics: [] };
+    }
+    return analysisResult.payload;
+  }
+
+  async getBestTimes(accountId: string, userId: string, userRole: Role) {
+    await this.findOne(accountId, userId, userRole);
 
     const analysisResult = await this.prisma.analysisResult.findFirst({
       where: {

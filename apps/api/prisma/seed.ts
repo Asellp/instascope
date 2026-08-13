@@ -29,8 +29,7 @@ async function main() {
   }
 
   // 1. Admin / Test Kullanıcısı Oluşturma
-  // DEĞİŞTİ: role artık enum, 'admin' yerine Role.ADMIN kullanılıyor.
-  await prisma.user.create({
+  const adminUser = await prisma.user.create({
     data: {
       email: 'admin@instascope.test',
       passwordHash: 'dummy_hash_for_seed',
@@ -39,8 +38,6 @@ async function main() {
   });
 
   // 2. 3 Adet Takip Edilen Hesap (TrackedAccount) Oluşturma
-  // DEĞİŞTİ: sourceType artık enum. Ayrıca 'scraper' geçersiz bir değerdi,
-  // enum'da sadece SCRAPE tanımlı - buna göre düzeltildi.
   const accountsData: { igUsername: string; sourceType: SourceType }[] = [
     { igUsername: 'teknoloji_gunlugu', sourceType: SourceType.API },
     { igUsername: 'anadolu_gezgini', sourceType: SourceType.API },
@@ -66,6 +63,7 @@ async function main() {
   for (const accData of accountsData) {
     const account = await prisma.trackedAccount.create({
       data: {
+        userId: adminUser.id, // Hesabı oluşturduğumuz admin kullanıcıya bağlıyoruz
         igUsername: accData.igUsername,
         sourceType: accData.sourceType,
         status: 'active',
