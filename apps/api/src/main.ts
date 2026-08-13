@@ -2,12 +2,47 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { ThrottlerExceptionFilter } from './common/filters/throttler-exception.filter';
+import { Request, Response, NextFunction } from 'express';
+import { Logger } from 'nestjs-pino';
+import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import {writeFileSync} from 'fs';
+import { join } from 'path';
 
 async function bootstrap() {
-  const app: any = await NestFactory.create(AppModule);
+  const app: any = await NestFactory.create(AppModule,{ bufferLogs: true});
 
-  // CORS ve credentials ayarı (Frontend'den gelen çerez ve istekler için)
+  app.useLogger(app.get(Logger));
+
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.set('trust proxy', 1);
+
+  // S3.4: Sıkı ve eksiksiz Helmet Güvenlik Başlıkları
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "cdnjs.cloudflare.com"],
+          styleSrc: ["'self'", "'unsafe-inline'", "fonts.googleapis.com"],
+          imgSrc: ["'self'", "data:", "validator.swagger.io"],
+          fontSrc: ["'self'", "fonts.gstatic.com"],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
+  // Permissions-Policy başlığını ekleyen ara katman (middleware)
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    next();
+  });
+  
+
+  app.useGlobalFilters(new ThrottlerExceptionFilter(), new AllExceptionsFilter());
+  
   app.enableCors({
     origin: [
       'http://localhost:3000', 
@@ -22,7 +57,6 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
-  // class-validator doğrulamalarını aktif et
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -31,7 +65,6 @@ async function bootstrap() {
     }),
   );
 
-  // Swagger Yapılandırması
   const config = new DocumentBuilder()
     .setTitle('Instascope API')
     .setDescription('Instascope backend servis dokümantasyonu')
@@ -42,13 +75,19 @@ async function bootstrap() {
 
   const document = SwaggerModule.createDocument(app, config);
   
-  // Swagger UI'ın tarayıcıdaki cookie'leri (credentials) isteklerde gönderebilmesi için:
+  // OpenAPI şemasını otomatik olarak openapi.json olarak kaydet
+  const outputPath = join(process.cwd(), 'openapi.json');
+  writeFileSync(outputPath, JSON.stringify(document, null, 2));
+
+  console.log(`OpenAPI şeması başarıyla kaydedildi: ${outputPath}`);
+
   SwaggerModule.setup('docs', app as any, document, {
     swaggerOptions: {
       persistAuthorization: true,
       withCredentials: true,
     },
   });
+
   await app.listen(3000);
 }
 bootstrap();

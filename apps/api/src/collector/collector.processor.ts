@@ -53,8 +53,10 @@ export class CollectorProcessor extends WorkerHost {
       });
 
       try {
+        if (!account.igAccountId) {
+          throw new Error('Eksik Parametre: igAccountId tanımlı değil.');
+        }
         // Kaynak tipini belirle (Prisma SourceType enum değerini lowercase string'e çeviriyoruz: API -> real, vb.)
-        // Projedeki sourceType yapına göre burayı 'api' | 'scrape' | 'mock' olarak esnek tutabilirsin.
         const rawSourceType = account.sourceType ? account.sourceType.toLowerCase() : 'real';
         const sourceTypeKey = rawSourceType === 'api' ? 'real' : rawSourceType; 
         
@@ -138,23 +140,35 @@ export class CollectorProcessor extends WorkerHost {
             },
           });
 
-          // Yorumları işle (Eğer servisten yorumlar geldiyse)
+          // Yorumları işle
           let commentsData = normalizedPost.comments;
-          if (!commentsData && sourceTypeKey === 'real') {
-            const commentsResponse = await dataSource.fetchComments({
-              accessToken: account.accessTokenEnc,
-              igMediaId: normalizedPost.igMediaId,
-            });
-            if (commentsResponse?.data) {
-              commentsData = commentsResponse.data.map((c: any) => ({
-                authorHash: c.username || c.from?.username || 'anonymous',
-                text: c.text,
-                commentedAt: c.timestamp ? new Date(c.timestamp) : new Date(),
-              }));
+          //this.logger.debug(`Post ID (${savedPost.igMediaId}) için mapper'dan gelen yorum sayısı: ${commentsData?.length || 0}`);
+          //this.logger.debug(`Aktif kaynak tipi (sourceTypeKey): ${sourceTypeKey}`);
+
+          if (!commentsData || (Array.isArray(commentsData) && commentsData.length === 0)) {
+            try {
+              const commentsResponse = await dataSource.fetchComments({
+                accessToken: account.accessTokenEnc,
+                igMediaId: normalizedPost.igMediaId,
+              });
+
+              const rawFetchedComments = Array.isArray(commentsResponse) 
+                ? commentsResponse 
+                : (commentsResponse?.data || commentsResponse?.comments || []);
+
+              if (Array.isArray(rawFetchedComments) && rawFetchedComments.length > 0) {
+                commentsData = rawFetchedComments.map((c: any) => ({
+                  authorHash: c.username || c.from?.username || c.authorHash || 'anonymous',
+                  text: c.text || c.message || '',
+                  commentedAt: c.timestamp || c.commentedAt ? new Date(c.timestamp || c.commentedAt) : new Date(),
+                }));
+              }
+            } catch (err) {
+              const errorMessage = err instanceof Error ? err.message : String(err);
             }
           }
 
-          if (commentsData && Array.isArray(commentsData)) {
+          if (commentsData && Array.isArray(commentsData) && commentsData.length > 0) {
             for (const commentItem of commentsData) {
               const existingComment = await this.prisma.comment.findFirst({
                 where: {
@@ -192,6 +206,56 @@ export class CollectorProcessor extends WorkerHost {
           this.logger.log(`Cache invalidated: overview:${account.id}:*`);
         }
 
+        // Hesap seviyesindeki metrikleri kaydet (AccountMetric)
+        try {
+          let followersCount = 0;
+          let followingCount = 0;
+
+          const dsAny = dataSource as any;
+          const profileFunc = dsAny.fetchAccountProfile || dsAny.fetchProfile;
+
+          if (typeof profileFunc === 'function') {
+            const profileResult = await profileFunc.call(dataSource, {
+              accessToken: account.accessTokenEnc,
+              igAccountId: account.igAccountId,
+              platform: account.igUsername,
+            });
+
+            const profileData = profileResult?.data || profileResult;
+
+            followersCount = 
+              profileData?.followersCount ?? 
+              profileData?.followers_count ?? 
+              0;
+
+            followingCount = 
+              profileData?.followingCount ?? 
+              profileData?.follows_count ?? 
+              profileData?.following_count ?? 
+              0;
+          }
+
+          await this.prisma.accountMetric.deleteMany({
+            where: { accountId: accountId },
+          });
+          // Önce bu hesaba ait bugünkü/en son kaydı bulmaya çalışalım veya direkt yeni kayıt atalım
+          // Her seferinde yeni kayıt oluşturmak (Time-series / Tarihsel takip için en popüler yöntem):
+          await this.prisma.accountMetric.create({
+            data: {
+              accountId: account.id,
+              followers: Number(followersCount),
+              following: Number(followingCount),
+              mediaCount: totalItemsCollected,
+              capturedAt: new Date(),
+            },
+          });
+
+          this.logger.log(`AccountMetric başarıyla kaydedildi -> Followers: ${followersCount}, Following: ${followingCount}, Media: ${totalItemsCollected}`);
+        } catch (metricErr: unknown) {
+          const metricErrMsg = metricErr instanceof Error ? metricErr.message : String(metricErr);
+          this.logger.warn(`AccountMetric kaydedilirken hata oluştu: ${metricErrMsg}`);
+        }
+
         // 1. Hesap Analiz Servisini Tetikle
         try {
           this.logger.log(`AI hesap analizi tetikleniyor (Account ID: ${account.id})...`);
@@ -199,7 +263,10 @@ export class CollectorProcessor extends WorkerHost {
             process.env.AI_SERVICE_URL || 'http://localhost:8000/internal/analyze-account',
             {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-internal-token': process.env.INTERNAL_SECRET_TOKEN || 'instascope-secure-internal-secret-key',
+              },
               body: JSON.stringify({
                 accountId: account.id,
                 igUsername: account.igUsername,
@@ -220,9 +287,17 @@ export class CollectorProcessor extends WorkerHost {
 
           if (commentsToAnalyze.length > 0) {
             const sentimentUrl = process.env.AI_SERVICE_URL_SENTIMENT || 'http://localhost:8000/internal/analyze';
+
+            const internalToken = process.env.INTERNAL_SECRET_TOKEN;
+            if (!internalToken) {
+              throw new Error('INTERNAL_SECRET_TOKEN environment variable is not defined!');
+            }
             await fetch(sentimentUrl, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-internal-token': internalToken,
+              },
               body: JSON.stringify({
                 kind: 'sentiment',
                 comments: commentsToAnalyze.map((c) => ({

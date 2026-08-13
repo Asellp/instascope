@@ -6,14 +6,16 @@ export class ApiDataMapper {
    * @param rawData Dış servisten gelen ham JSON verisi
    */
   static mapToNormalized(rawData: any): NormalizedPost {
-    // 1. Yorumları Dönüştür
+    // 1. Yorumları Dönüştür (Farklı olası yapıları destekle: comments.data, comments veya comment listesi)
     const comments: NormalizedComment[] = [];
-    if (rawData.comments && Array.isArray(rawData.comments.data)) {
-      rawData.comments.data.forEach((comment: any) => {
+    const rawComments = rawData.comments?.data || rawData.comments || rawData.commentList;
+    
+    if (Array.isArray(rawComments)) {
+      rawComments.forEach((comment: any) => {
         comments.push({
-          authorHash: comment.from?.username || comment.username || 'unknown',
-          text: comment.text || '',
-          commentedAt: comment.timestamp ? new Date(comment.timestamp) : new Date(),
+          authorHash: comment.from?.username || comment.username || comment.authorHash || 'anonymous',
+          text: comment.text || comment.message || '',
+          commentedAt: comment.timestamp || comment.commentedAt ? new Date(comment.timestamp || comment.commentedAt) : new Date(),
         });
       });
     }
@@ -29,16 +31,21 @@ export class ApiDataMapper {
 
       const viewsData = rawData.insights.data.find((i: any) => i.name === 'impressions');
       if (viewsData && viewsData.values?.length > 0) views = viewsData.values[0].value;
+    } else {
+      // Eğer düz property olarak geldiyse alternatifleri kontrol et
+      reach = rawData.reach || rawData.impressions || 0;
+      views = rawData.views || rawData.video_views || 0;
     }
 
-    const likes = rawData.like_count || 0;
-    const commentsCount = rawData.comments_count || 0;
+    // Hem snake_case hem camelCase alan adlarını destekle
+    const likes = rawData.like_count ?? rawData.likesCount ?? rawData.likes ?? 0;
+    const commentsCount = rawData.comments_count ?? rawData.commentsCount ?? rawData.comment_count ?? comments.length;
 
     // Basit bir etkileşim oranı (Engagement Rate) hesaplaması: (Beğeni + Yorum) / Erişim
     const engagementRate = reach > 0 ? (likes + commentsCount) / reach : 0;
 
     // Medya tipini dinamik olarak belirle
-    let normalizedType = rawData.media_type || rawData.postType || 'UNKNOWN';
+    let normalizedType = rawData.media_type || rawData.postType || rawData.type || 'UNKNOWN';
     if (
       normalizedType === 'CAROUSEL_ALBUM' || 
       normalizedType === 'CAROUSEL' || 
@@ -50,11 +57,11 @@ export class ApiDataMapper {
 
     // 3. Ortak Şemayı Döndür
     return {
-      igMediaId: rawData.id,
+      igMediaId: rawData.id || rawData.igMediaId || rawData.mediaId,
       type: normalizedType,
-      caption: rawData.caption || null,
-      postedAt: rawData.timestamp ? new Date(rawData.timestamp) : new Date(),
-      permalink: rawData.permalink || null,
+      caption: rawData.caption || rawData.text || null,
+      postedAt: rawData.timestamp || rawData.postedAt ? new Date(rawData.timestamp || rawData.postedAt) : new Date(),
+      permalink: rawData.permalink || rawData.url || null,
       metrics: {
         likes,
         commentsCount,

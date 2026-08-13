@@ -3,16 +3,17 @@ import {
   UnauthorizedException,
   ForbiddenException,
   ConflictException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { CacheService } from '../cache/cache.service'; // <--- CacheService eklendi
 import * as jwt from 'jsonwebtoken';
 import { argon2Verify, argon2id } from 'hash-wasm';
 
 @Injectable()
 export class AuthService {
-  // Fallback KALDIRILDI: JWT_SECRET tanımlı değilse uygulama açılışta patlamalı,
-  // sessizce herkesin bildiği bir default'a düşmemeli.
   private readonly jwtSecret = (() => {
     const s = process.env.JWT_SECRET;
     if (!s) {
@@ -21,10 +22,10 @@ export class AuthService {
     return s;
   })();
 
-  // refreshSecret artık gerekli değil: refresh token'lar JWT olarak değil,
-  // opaque random string + DB'de hash olarak saklanıyor (aşağıya bakınız).
-
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private cacheService: CacheService, // <--- Burada enjekte ediliyor
+  ) {}
 
   async register(name: string, email: string, password: string) {
     const passwordHash = await argon2id({
@@ -32,7 +33,7 @@ export class AuthService {
       salt: crypto.randomBytes(16),
       parallelism: 1,
       iterations: 3,
-      memorySize: 19456, // ~19 MB - OWASP önerisine uygun (önceki 4096 = 4MB zayıftı)
+      memorySize: 19456,
       hashLength: 32,
       outputType: 'encoded',
     });
@@ -44,8 +45,6 @@ export class AuthService {
         select: { id: true, email: true },
       });
     } catch (e: any) {
-      // Prisma unique constraint ihlali (email zaten kayıtlı).
-      // Önceden yakalanmıyordu, client'a 500 + stack trace sızabiliyordu.
       if (e.code === 'P2002') {
         throw new ConflictException('Bu e-posta adresi zaten kayıtlı.');
       }
@@ -62,14 +61,39 @@ export class AuthService {
   }
 
   async login(email: string, password: string) {
+    const lockKey = `lock:login:${email}`;
+    const attemptKey = `attempts:login:${email}`;
+
+    // 1. Hesap kilitli mi kontrol et (Brute-force koruması)
+    const isLocked = await this.cacheService.get(lockKey);
+    if (isLocked) {
+      throw new HttpException(
+        'Çok fazla başarısız giriş denemesi. Lütfen 5 dakika sonra tekrar deneyin.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
     const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) throw new UnauthorizedException('Geçersiz kimlik bilgileri');
+    
+    if (!user) {
+      await this.handleFailedLogin(attemptKey, lockKey);
+      throw new UnauthorizedException('Geçersiz kimlik bilgileri');
+    }
 
     const passwordValid = await argon2Verify({
       password,
       hash: user.passwordHash,
     });
-    if (!passwordValid) throw new UnauthorizedException('Geçersiz kimlik bilgileri');
+
+    if (!passwordValid) {
+      await this.handleFailedLogin(attemptKey, lockKey);
+      throw new UnauthorizedException('Geçersiz kimlik bilgileri');
+    }
+
+    // Başarılı girişte sayaçları ve kilidi temizle
+    // Başarılı girişte sayaçları ve kilidi temizle
+    await (this.cacheService as any).del?.(attemptKey) || await (this.cacheService as any).delete?.(attemptKey);
+    await (this.cacheService as any).del?.(lockKey) || await (this.cacheService as any).delete?.(lockKey);
 
     const tokenFamily = crypto.randomBytes(16).toString('hex');
     const tokens = await this.generateTokens(user.id, tokenFamily);
@@ -78,6 +102,24 @@ export class AuthService {
       user: { id: user.id, email: user.email, name: user.email.split('@')[0] },
       ...tokens,
     };
+  }
+
+  private async handleFailedLogin(attemptKey: string, lockKey: string) {
+    let attempts: any = (await this.cacheService.get(attemptKey)) || 0;
+    attempts = Number(attempts) + 1;
+
+    if (attempts >= 5) {
+      // 5 başarısız denemede hesabı 5 dakika (300 saniye) kilitle
+      await this.cacheService.set(lockKey, 'locked', 300);
+      await (this.cacheService as any).delete?.(attemptKey) ?? await (this.cacheService as any).del?.(attemptKey);
+      throw new HttpException(
+        'Çok fazla başarısız deneme nedeniyle hesabınız 5 dakika süreyle kilitlendi.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    // Sayaç süresini 5 dakika olarak güncelle
+    await this.cacheService.set(attemptKey, attempts, 300);
   }
 
   async getUserById(userId: string) {
@@ -96,9 +138,6 @@ export class AuthService {
   async refreshTokens(oldRefreshTokenString: string) {
     if (!oldRefreshTokenString) throw new UnauthorizedException('Token bulunamadı');
 
-    // Client'tan gelen ham token'ı hash'leyip DB'de hash üzerinden arıyoruz.
-    // DB'de asla ham token tutulmuyor - sızıntı olsa bile token'lar
-    // doğrudan kullanılamaz.
     const incomingHash = this.hashToken(oldRefreshTokenString);
 
     const storedToken = await this.prisma.refreshToken.findUnique({
@@ -108,8 +147,6 @@ export class AuthService {
     if (!storedToken) throw new UnauthorizedException('Geçersiz token');
 
     if (storedToken.used) {
-      // Reuse detection: kullanılmış bir refresh token tekrar geldiyse
-      // muhtemelen çalınmıştır - tüm aileyi (tüm oturum zincirini) iptal et.
       await this.prisma.refreshToken.deleteMany({
         where: { family: storedToken.family },
       });
@@ -128,10 +165,6 @@ export class AuthService {
     return this.generateTokens(storedToken.userId, storedToken.family);
   }
 
-  // Kullanıcının tüm refresh token'larını (tüm cihaz/oturumlarını) invalidate eder.
-  // AuthController.logout() tarafından çağrılıyor. Şu an tüm session'ları kapatıyor;
-  // yalnızca mevcut cihazı kapatmak istersen family bilgisini de controller'dan
-  // geçirip sadece o family'i silecek şekilde genişletebiliriz.
   async logout(userId: string) {
     await this.prisma.refreshToken.deleteMany({ where: { userId } });
   }
@@ -146,8 +179,6 @@ export class AuthService {
       algorithm: 'HS256',
     });
 
-    // Refresh token artık JWT değil: yüksek entropili opaque random string.
-    // Ham hali client'a gönderilir, DB'de sadece hash'i saklanır.
     const rawRefreshToken = crypto.randomBytes(64).toString('hex');
     const refreshTokenHash = this.hashToken(rawRefreshToken);
 

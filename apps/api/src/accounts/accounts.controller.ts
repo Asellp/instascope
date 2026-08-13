@@ -14,7 +14,8 @@ import { AccountsService } from './accounts.service';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { OverviewQueryDto } from './dto/overview-query.dto';
 import { PostsQueryDto } from './dto/posts-query.dto';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { AccountResponseDto } from './dto/response-account.dto';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -30,6 +31,12 @@ export class AccountsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Yeni hesap ekle' })
+  @ApiResponse({
+    status: 201,
+    description: 'Hesap başarıyla oluşturuldu.',
+    type: AccountResponseDto, // Veya ilgili response DTO
+  })
   create(@Body() createAccountDto: CreateAccountDto) {
     return this.accountsService.create(createAccountDto);
   }
