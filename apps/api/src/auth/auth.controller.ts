@@ -15,6 +15,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 
 // JwtStrategy.validate()'in döndürdüğü şekille birebir uyumlu.
 // req.user.userId DEĞİL, req.user.id kullanılmalı (bir önceki bug buradaydı).
@@ -48,6 +49,7 @@ export class AuthController {
 
   // 2. Kullanıcı Girişi (Login)
   @Post('login')
+  @Throttle({ 'default': { ttl: 60000, limit: 5 } })
   @HttpCode(HttpStatus.OK)
   async login(
     @Body() body: LoginDto,

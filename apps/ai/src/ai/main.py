@@ -1,7 +1,7 @@
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel
 
 from .besttime import build_besttime_heatmap
@@ -21,8 +21,21 @@ from .schemas import (
 )
 from .sentiment_model import SentimentModel, get_model
 from .topic_model import TopicAnalysisModel, get_topic_model, prepare_text_for_topics
+from dotenv import load_dotenv
+load_dotenv()  # .env dosyasını yükler
 
 _DB_ENABLED = os.environ.get("SKIP_DB_WRITE") != "1"
+
+
+# Güvenlik Kontrolü: Servisler arası imzalı token doğrulaması
+def verify_internal_token(x_internal_token: str = Header(None)):
+    expected_token = (os.environ.get("INTERNAL_SECRET_TOKEN"))
+    if not x_internal_token or x_internal_token != expected_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="İmzasız veya geçersiz iç token.",
+        )
+    return x_internal_token
 
 
 @asynccontextmanager
@@ -30,7 +43,7 @@ async def lifespan(app: FastAPI):
     # Pool ve modeller uygulama başlarken BİR KEZ kurulur — her istekte değil.
     if _DB_ENABLED:
         init_pool()
-    get_model()        # sentiment model
+    get_model()  # sentiment model
     get_topic_model()  # BERTopic model
     yield
     if _DB_ENABLED:
@@ -60,7 +73,11 @@ def health_check():
     return HealthResponse(status="ok", service="instascope-ai", version="0.1.0")
 
 
-@app.post("/internal/analyze", response_model=AnalyzeResponse)
+@app.post(
+    "/internal/analyze",
+    response_model=AnalyzeResponse,
+    dependencies=[Depends(verify_internal_token)],
+)
 def analyze(payload: AnalyzeRequest, model: SentimentModel = Depends(get_model)):
     """
     A2.3 — kind=sentiment için batch skorlama + analysis_results tablosuna yazım.
@@ -83,10 +100,16 @@ def analyze(payload: AnalyzeRequest, model: SentimentModel = Depends(get_model))
     if _DB_ENABLED:
         write_analysis_results(results)
 
-    return AnalyzeResponse(results=results, model_version=model.model_name, count=len(results))
+    return AnalyzeResponse(
+        results=results, model_version=model.model_name, count=len(results)
+    )
 
 
-@app.post("/internal/analyze-account", response_model=AccountAnalyzeResponse)
+@app.post(
+    "/internal/analyze-account",
+    response_model=AccountAnalyzeResponse,
+    dependencies=[Depends(verify_internal_token)],
+)
 def analyze_account(
     data: AccountAnalyzeRequest,
     topic_m: TopicAnalysisModel = Depends(get_topic_model),
@@ -117,7 +140,6 @@ def analyze_account(
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
-                # 1. Konu modelleme için metinler: yorumlar + gönderi açıklamaları
                 # 1. Konu modelleme için metinler: yorumlar + gönderi açıklamaları
                 cur.execute(
                     """
@@ -207,4 +229,5 @@ def analyze_account(
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("src.ai.main:app", host="0.0.0.0", port=8000, reload=True)

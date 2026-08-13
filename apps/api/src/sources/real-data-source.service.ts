@@ -31,14 +31,19 @@ export class RealDataSourceService implements IDataSource {
     
     try {
       const response = await this.fetchWithRetry(`https://graph.facebook.com/v18.0/${igAccountId}`, {
-        fields: 'id,username,followers_count,media_count',
+        fields: 'id,username,followers_count,follows_count,media_count',
         access_token: accessToken,
       });
 
       return {
         source: 'meta_api',
         type: 'profile',
-        data: response.data,
+        data: {
+          followersCount: response.data.followers_count || 0,
+          followingCount: response.data.follows_count || 0,
+          mediaCount: response.data.media_count || 0,
+          username: response.data.username,
+        },
       };
     } catch (error: any) {
       const detailedError = error.response?.data 
@@ -50,6 +55,9 @@ export class RealDataSourceService implements IDataSource {
     }
   }
 
+  async fetchAccountProfile(params?: any): Promise<any> {
+    return this.fetchProfile(params);
+  }
   async fetchPosts(params?: any): Promise<any> {
     const { accessToken, igAccountId } = params;
     if (!accessToken) {
