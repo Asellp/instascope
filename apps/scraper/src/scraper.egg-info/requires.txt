@@ -1,0 +1,9 @@
+instaloader<5.0,>=4.15
+python-dotenv>=1.1
+
+[dev]
+pytest>=8.0
+pytest-cov>=6.0
+ruff>=0.6
+black>=24.0
+mypy>=1.10
