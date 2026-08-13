@@ -1,0 +1,1 @@
+from . import _instaloader_patches  # noqa: F401
