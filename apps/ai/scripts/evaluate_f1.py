@@ -10,6 +10,15 @@ Eval dosyası formatı (basitleştirilmiş):
 
 is_spam=true olan satırlar sentiment F1'e dahil edilmiyor (kılavuz 2.5 —
 spam'i nötr saymak yanıltıcı olur). sentiment=null olan satırlar da atlanır.
+
+DÜZELTME (gerçek veri bulgusu): artık on_isle(text).temiz_metin YERİNE
+on_isle_sentiment(text) kullanılıyor — emoji normalizasyonu sentiment için
+BİLEREK ATLANIYOR. Gerçek veriyle (real_data_pool.json) doğrulandı: emoji
+normalizasyonu, emoji-ağırlıklı yorumları modelin anlayamadığı soyut kodlara
+çeviriyordu, macro F1'i 0.4826'ya düşürüyordu. on_isle_sentiment ile bu
+0.6922'ye çıktı (+%43). Diğer modüller (topic modelleme, spam) hâlâ eski
+on_isle()'ı kullanmaya devam ediyor, bu değişiklik SADECE sentiment'i
+etkiliyor.
 """
 
 from __future__ import annotations
@@ -22,7 +31,7 @@ from pathlib import Path
 from sklearn.metrics import classification_report, f1_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from ai.pipeline import on_isle  # noqa: E402
+from ai.pipeline import on_isle_sentiment  # noqa: E402
 from ai.sentiment_model import SentimentModel  # noqa: E402
 
 LABELS = ["positive", "negative", "neutral"]
@@ -56,7 +65,7 @@ def main():
         return
 
     y_true = [r["sentiment"] for r in rows]
-    temiz_metinler = [on_isle(r["text"]).temiz_metin for r in rows]
+    temiz_metinler = [on_isle_sentiment(r["text"]) for r in rows]
 
     model = SentimentModel()
     preds = model.predict_batch(temiz_metinler)

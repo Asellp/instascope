@@ -49,3 +49,29 @@ def on_isle(raw_text: str) -> OnIslenmisYorum:
         hashtags=hashtags,
         emoji_etiketleri=emoji_labels,
     )
+
+
+def on_isle_sentiment(raw_text: str) -> str:
+    """
+    Sentiment modeli için AYRI ön işleme yolu — on_isle()'dan FARKLI olarak
+    3. adımı (normalize_emojis) BİLEREK ATLAR, emoji ham haliyle kalır.
+
+    NEDEN: cardiffnlp/twitter-xlm-roberta-base-sentiment gibi transformer
+    tabanlı sentiment modelleri emojiyi doğal dilin bir parçası olarak
+    anlayabiliyor — "😍😍😍" gibi emoji-ağırlıklı bir yorumu "[EMOJI_POZITIF]
+    EMOJI_POZITIF] [EMOJI_POZITIF]" gibi soyut bir koda çevirmek, modelin bu
+    doğal yeteneğini elinden alıp "neutral"e (emin olamama) düşürüyordu.
+
+    Gerçek veriyle (real_data_pool.json, 368 örnek) doğrulandı:
+    Macro F1 0.4826 -> 0.6922 (+%43), kısa/emoji-ağırlıklı yorumlarda
+    doğruluk %90.86 (bkz. scripts/evaluate_f1_no_emoji_norm.py denemesi).
+
+    ÖNEMLİ: on_isle() DEĞİŞTİRİLMEDİ — topic modelleme, spam filtresi gibi
+    diğer kullanımlar hâlâ eski (emoji normalizasyonlu) davranışı
+    kullanmaya devam ediyor. Bu fonksiyon SADECE sentiment analizi için.
+    """
+    if raw_text is None:
+        raw_text = ""
+
+    text_no_tags, _mentions, _hashtags = strip_mentions_and_hashtags(raw_text)
+    return clean_text(text_no_tags)

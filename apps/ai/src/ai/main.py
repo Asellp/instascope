@@ -1,12 +1,19 @@
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Header, status
 from pydantic import BaseModel
 
 from .besttime import build_besttime_heatmap
 from .db import close_pool, init_pool, write_analysis_results, _get_pool
-from .pipeline import on_isle
+from .likes_model import (
+    LikesModelNotReady,
+    MODEL_VERSION as LIKES_MODEL_VERSION,
+    get_account_likes_report,
+    get_global_report as get_likes_global_report,
+    train_likes_model,
+)
+from .pipeline import on_isle_sentiment
 from .schemas import (
     AccountAnalyzeRequest,
     AccountAnalyzeResponse,
@@ -14,15 +21,32 @@ from .schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
     KeywordScore,
+    LikesBaselinePayload,
     PostEngagementInput,
     SentimentPayload,
+    SpamPayload,
     TopicItem,
     TopicPayload,
 )
 from .sentiment_model import SentimentModel, get_model
+from .spam_serving import SpamModelNotReady, load_spam_model, score_comments_for_spam
 from .topic_model import TopicAnalysisModel, get_topic_model, prepare_text_for_topics
 
+from dotenv import load_dotenv
+load_dotenv()  # .env dosyasını yükler
+
 _DB_ENABLED = os.environ.get("SKIP_DB_WRITE") != "1"
+
+
+# Güvenlik Kontrolü: Servisler arası imzalı token doğrulaması
+def verify_internal_token(x_internal_token: str = Header(None)):
+    expected_token = (os.environ.get("INTERNAL_SECRET_TOKEN"))
+    if not x_internal_token or x_internal_token != expected_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="İmzasız veya geçersiz iç token.",
+        )
+    return x_internal_token
 
 
 @asynccontextmanager
@@ -32,6 +56,17 @@ async def lifespan(app: FastAPI):
         init_pool()
     get_model()        # sentiment model
     get_topic_model()  # BERTopic model
+    if _DB_ENABLED:
+        # Likes baseline (A3.3): global/pooled model burada BİR KEZ eğitilir ve
+        # cache'lenir. Yeterli veri yoksa (proje henüz başlangıçtaysa) train_likes_model
+        # None döner, servis yine de ayakta kalır — likes_baseline kind'i o durumda
+        # analyze-account yanıtlarından atlanır.
+        train_likes_model()
+        # Spam modeli (A3.4): DB'den YENİDEN EĞİTİLMİYOR (comments tablosunda
+        # is_spam etiketi yok) — offline eğitilip diske kaydedilmiş artifact
+        # burada sadece YÜKLENİYOR. Artifact yoksa servis yine ayakta kalır,
+        # kind="spam" o durumda /internal/analyze yanıtlarından atlanır.
+        load_spam_model()
     yield
     if _DB_ENABLED:
         close_pool()
@@ -60,13 +95,29 @@ def health_check():
     return HealthResponse(status="ok", service="instascope-ai", version="0.1.0")
 
 
-@app.post("/internal/analyze", response_model=AnalyzeResponse)
+@app.post(
+    "/internal/analyze",
+    response_model=AnalyzeResponse,
+    dependencies=[Depends(verify_internal_token)],
+)
 def analyze(payload: AnalyzeRequest, model: SentimentModel = Depends(get_model)):
     """
     A2.3 — kind=sentiment için batch skorlama + analysis_results tablosuna yazım.
+    A3.4 — AYNI batch için kind=spam de üretilir (sentiment akışı KESİLMİYOR,
+    spam yorumlar da sentiment alır — filtrelemeyi backend/frontend, is_spam
+    flag'ine bakarak kendi aggregation'ında yapar).
     AI servisi aynı Postgres'e doğrudan yazıyor, ayrı bir Backend endpoint'i yok.
+
+    DÜZELTME (gerçek veri bulgusu): artık on_isle(c.text).temiz_metin YERİNE
+    on_isle_sentiment(c.text) kullanılıyor — emoji normalizasyonu sentiment
+    için BİLEREK ATLANIYOR. Gerçek veriyle doğrulandı: emoji-ağırlıklı
+    yorumlarda ("😍😍😍" gibi) eski yol modelin anlayamadığı soyut kodlara
+    ([EMOJI_POZITIF]) çeviriyordu, macro F1'i 0.4826'ya düşürüyordu.
+    on_isle_sentiment ile 0.6922'ye çıktı (+%43). Diğer kind'lar (topics,
+    spam) bu değişiklikten etkilenmiyor — hâlâ kendi ayrı ön işleme
+    yollarını kullanıyorlar.
     """
-    temiz_metinler = [on_isle(c.text).temiz_metin for c in payload.comments]
+    temiz_metinler = [on_isle_sentiment(c.text) for c in payload.comments]
     predictions = model.predict_batch(temiz_metinler)
 
     results = [
@@ -80,13 +131,41 @@ def analyze(payload: AnalyzeRequest, model: SentimentModel = Depends(get_model))
         for comment, pred in zip(payload.comments, predictions)
     ]
 
+    # --- Spam/bot tespiti (A3.4) ---
+    # Model DB'den eğitilmiyor, sadece davranışsal feature'lar (authorHash
+    # geçmişi) DB'den canlı çekiliyor — sentiment'in aksine DB okuması ŞART,
+    # bu yüzden _DB_ENABLED=False (test modu) burada da atlanmalı. Diskte
+    # eğitilmiş artifact yoksa (SpamModelNotReady) da sessizce atlanır.
+    spam_scores: dict = {}
+    if _DB_ENABLED:
+        try:
+            comment_ids = [c.comment_id for c in payload.comments]
+            spam_scores = score_comments_for_spam(comment_ids)
+        except SpamModelNotReady:
+            pass
+
+    for comment_id, (is_spam, confidence) in spam_scores.items():
+        results.append(
+            AnalysisResultRow(
+                subject_type="comment",
+                subject_id=comment_id,
+                kind="spam",
+                payload=SpamPayload(is_spam=is_spam, confidence=confidence),
+                model_version="spam-learned-logreg-v1",
+            )
+        )
+
     if _DB_ENABLED:
         write_analysis_results(results)
 
     return AnalyzeResponse(results=results, model_version=model.model_name, count=len(results))
 
 
-@app.post("/internal/analyze-account", response_model=AccountAnalyzeResponse)
+@app.post(
+    "/internal/analyze-account",
+    response_model=AccountAnalyzeResponse,
+    dependencies=[Depends(verify_internal_token)],
+)
 def analyze_account(
     data: AccountAnalyzeRequest,
     topic_m: TopicAnalysisModel = Depends(get_topic_model),
@@ -120,7 +199,10 @@ def analyze_account(
                 # 1. Konu modelleme için metinler: yorumlar + gönderi açıklamaları
                 cur.execute(
                     """
-                    SELECT text FROM comments WHERE account_id = %s
+                    SELECT c.text 
+                    FROM comments c
+                    JOIN posts p ON p.id = c.post_id
+                    WHERE p.account_id = %s
                     UNION ALL
                     SELECT caption AS text FROM posts WHERE account_id = %s AND caption IS NOT NULL
                     LIMIT 1000
@@ -146,7 +228,7 @@ def analyze_account(
         texts = [prepare_text_for_topics(t) for t in raw_texts]
 
         if texts:
-            raw_topics = topic_m.fit_transform_topics(texts, nr_topics=6)
+            raw_topics = topic_m.fit_transform_topics(texts, nr_topics=8)
             topic_payload = TopicPayload(
                 status="completed",
                 total_topics=len(raw_topics),
@@ -188,6 +270,33 @@ def analyze_account(
             ),
         ]
 
+        # --- Etkileşim (beğeni) tahmini baseline (A3.3) ---
+        # Model GLOBAL/havuzlanmış (bkz. likes_model.py) — burada YENİDEN eğitilmiyor,
+        # sadece bu hesabın önceden hesaplanmış test-kesiti sonucu okunuyor.
+        try:
+            account_likes_report = get_account_likes_report(data.accountId)
+        except LikesModelNotReady:
+            account_likes_report = None  # servis henüz hiç eğitim yapamadı (yetersiz veri)
+
+        if account_likes_report is not None:
+            results.append(
+                AnalysisResultRow(
+                    subject_type="account",
+                    subject_id=data.accountId,
+                    kind="likes_baseline",
+                    payload=LikesBaselinePayload(
+                        model_type=account_likes_report.model_type,
+                        mae=account_likes_report.mae,
+                        naive_mae=account_likes_report.naive_mae,
+                        beats_naive=account_likes_report.beats_naive,
+                        sample_size=account_likes_report.n_test,
+                    ),
+                    model_version=LIKES_MODEL_VERSION,
+                )
+            )
+        # account_likes_report None ise (hesabın test kesitinde postu yok / model hiç
+        # eğitilemedi) likes_baseline kind'i bu yanıttan sessizce atlanıyor — hata değil.
+
         write_analysis_results(results)
 
     except Exception as e:
@@ -198,6 +307,50 @@ def analyze_account(
         success=True,
         message="Hesap analizi (konu + en iyi zaman) tamamlandı ve veritabanına kaydedildi",
         accountId=data.accountId,
+    )
+
+
+class LikesRetrainResponse(BaseModel):
+    success: bool
+    message: str
+    model_type: str | None = None
+    mae: float | None = None
+    naive_mae: float | None = None
+    beats_naive: bool | None = None
+    n_train: int | None = None
+    n_test: int | None = None
+
+
+@app.post("/internal/retrain-likes-baseline", response_model=LikesRetrainResponse)
+def retrain_likes_baseline():
+    """
+    Likes baseline (A3.3) global modelini DB'deki güncel veriyle yeniden eğitir.
+    /internal/analyze-account BUNU tetiklemez — her hesap analizinde yeniden eğitim
+    hem gereksiz hem de latency hedefiyle (A4.4) çelişir. Bu uç, servis dışından
+    (örn. periyodik bir job/cron ile) manuel tetiklenmek için var.
+    """
+    if not _DB_ENABLED:
+        return LikesRetrainResponse(
+            success=True, message="SKIP_DB_WRITE aktif, retrain atlandı (test modu)"
+        )
+
+    report = train_likes_model()
+    if report is None:
+        # Servis çökmesin diye 503 — "henüz veri yetersiz", programatik bir hata değil.
+        raise HTTPException(
+            status_code=503,
+            detail="Likes baseline modeli eğitilemedi: yeterli veri yok (test seti boş).",
+        )
+
+    return LikesRetrainResponse(
+        success=True,
+        message="Likes baseline modeli yeniden eğitildi.",
+        model_type=report.model_type,
+        mae=report.mae,
+        naive_mae=report.naive_mae,
+        beats_naive=report.beats_naive,
+        n_train=report.n_train,
+        n_test=report.n_test,
     )
 
 

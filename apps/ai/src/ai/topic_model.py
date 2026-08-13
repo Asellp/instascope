@@ -10,13 +10,10 @@ DÜZELTME NOTLARI:
      kelime olarak geri ekleniyor (bkz. prepare_text_for_topics).
   2. min_topic_size ve UMAP n_neighbors artık SABİT değil — her
      fit_transform_topics çağrısında eldeki veri boyutuna göre otomatik
-     hesaplanıyor. Sebep: gerçek Instagram verisinde gelecek yorum sayısı
-     çok değişken olacak (bir test hesabında 20 yorum, ileride belki
-     1000+) — sabit bir min_topic_size (örn. 15), az veride "hiç tema
-     bulunamadı" sonucuna, çok veride ise gereğinden kaba kümelemeye yol
-     açar. min_topic_size ~ len(texts)/20 mantığıyla ölçeklendiriliyor,
-     override etmek istersen fit_transform_topics'e elle de verebilirsin.
-  3. nr_topics zorla uygulanmadan ÖNCE ham (doğal) tema sayısı loglanıyor.
+     hesaplanıyor.
+  3. DİNAMİK COUNT VECTORIZER (Hata Düzeltmesi): min_df değeri gelen metin
+     sayısına göre dinamik hesaplanıyor. Az veride (örn. 7-10 metin) min_df=1
+     olarak ayarlanarak scikit-learn "min_df / max_df" çökmesi engelleniyor.
 """
 
 from __future__ import annotations
@@ -42,13 +39,23 @@ TURKISH_STOPWORDS = [
     "ancak", "şeyi", "şey", "yani", "mi", "mı", "mu", "mü", "hepsi", "hiç", "bile",
     "miydi", "mıydı", "miyim", "mıyım", "oldu", "olmuş", "olan", "olarak", "ise", "diye",
     "benler", "senler", "artık", "ya", "aynı", "değil", "olsun", "böyle", "şöyle",
-    "emoji_pozitif", "emoji_negatif", "emoji_notr", "emoji",
+    "emoji_pozitif", "emoji_negatif", "emoji_notr", "emoji","iyi", "güzel", "en", "yeni", "harika", "süper", "muhteşem", "mükemmel",
+    "hoş", "tatlı", "sevimli", "başarılı",
 ]
 
 _EMOJI_TAG_RE = re.compile(r"\[emoji_\w+\]")
 
 MIN_TOPIC_SIZE_FLOOR = 3       # bu değerin altına asla inmez (anlamsız mikro-temalar olmasın)
-MIN_TOPIC_SIZE_RATIO = 20      # min_topic_size ~= len(texts) / bu oran
+
+
+# DÜZELTME (03_topic_modeling.ipynb deneyi, e-ticaret_urun_yorumlari.csv ile):
+# eskiden 20'ydi -> n=2000-4000 aralığında min_topic_size=100-200 çıkıyordu, HDBSCAN
+# bu kadar büyük bir eşikle ham kümeleri 3-4'e kadar birleştiriyordu, DoD (>=5 tema)
+# geçilemiyordu. min_topic_size=40 (n=4000 için) elle zorlanınca 6 anlamlı tema çıktı
+# (bkz. notebook). 100'e çekildi ki n=4000'de aynı ~40 civarına denk gelsin; aynı sorun
+# mock_comments.json'da da gözlemlendi (n~2400, eski oranla min=121 -> aynı ratio'yla
+# ~24'e düşüyor), yani bu tek bir veri setine özgü değil, genel bir düzeltme.
+MIN_TOPIC_SIZE_RATIO = 100     # min_topic_size ~= len(texts) / bu oran
 
 
 def prepare_text_for_topics(raw_text: str) -> str:
@@ -70,6 +77,21 @@ def _adaptive_min_topic_size(n_texts: int) -> int:
     return max(MIN_TOPIC_SIZE_FLOOR, n_texts // MIN_TOPIC_SIZE_RATIO)
 
 
+def _build_adaptive_vectorizer(n_texts: int) -> CountVectorizer:
+    """
+    Gelen metin sayısına göre min_df değerini ayarlar.
+    Metin sayısı az ise min_df=1 tutularak CountVectorizer patlaması engellenir.
+    """
+    # 15 metinden azsa min_df=1, çoksa min_df=2 veya 3 olacak şekilde ayarla
+    effective_min_df = 1 if n_texts < 15 else min(3, max(1, n_texts // 10))
+    
+    return CountVectorizer(
+        stop_words=TURKISH_STOPWORDS,
+        min_df=effective_min_df,
+        ngram_range=(1, 2),
+    )
+
+
 @dataclass
 class TopicResult:
     topic_id: int
@@ -83,11 +105,6 @@ class TopicAnalysisModel:
         self.model_name = model_name
         self.umap_n_neighbors = umap_n_neighbors
         self.embedding_model = SentenceTransformer(model_name)
-        self.vectorizer_model = CountVectorizer(
-            stop_words=TURKISH_STOPWORDS,
-            min_df=3,
-            ngram_range=(1, 2),
-        )
 
     def fit_transform_topics(
         self,
@@ -102,10 +119,13 @@ class TopicAnalysisModel:
         effective_min_topic_size = min_topic_size or _adaptive_min_topic_size(n)
         # UMAP n_neighbors örnek sayısını aşamaz (aksi halde hata fırlatır)
         effective_n_neighbors = min(self.umap_n_neighbors, max(2, n - 1))
+        
+        # Dinamik CountVectorizer oluşturma
+        vectorizer_model = _build_adaptive_vectorizer(n)
 
         print(
             f"[topic_model] {n} metin | min_topic_size={effective_min_topic_size} "
-            f"| n_neighbors={effective_n_neighbors}"
+            f"| n_neighbors={effective_n_neighbors} | vectorizer_min_df={vectorizer_model.min_df}"
         )
 
         umap_model = UMAP(
@@ -122,41 +142,46 @@ class TopicAnalysisModel:
             prediction_data=True,
         )
 
-        topic_model = BERTopic(
-            embedding_model=self.embedding_model,
-            vectorizer_model=self.vectorizer_model,
-            umap_model=umap_model,
-            hdbscan_model=hdbscan_model,
-            verbose=False,
-        )
+        try:
+            topic_model = BERTopic(
+                embedding_model=self.embedding_model,
+                vectorizer_model=vectorizer_model,
+                umap_model=umap_model,
+                hdbscan_model=hdbscan_model,
+                verbose=False,
+            )
 
-        topics, _ = topic_model.fit_transform(texts)
-        raw_topic_count = len([t for t in set(topics) if t != -1])
-        print(f"[topic_model] Ham (zorla birleştirmeden önceki) tema sayısı: {raw_topic_count}")
+            topics, _ = topic_model.fit_transform(texts)
+            raw_topic_count = len([t for t in set(topics) if t != -1])
+            print(f"[topic_model] Ham (zorla birleştirmeden önceki) tema sayısı: {raw_topic_count}")
 
-        if nr_topics is not None and raw_topic_count > nr_topics:
-            topic_model.reduce_topics(texts, nr_topics=nr_topics)
+            if nr_topics is not None and raw_topic_count > nr_topics:
+                topic_model.reduce_topics(texts, nr_topics=nr_topics)
 
-        topic_info = topic_model.get_topic_info()
+            topic_info = topic_model.get_topic_info()
 
-        results = []
-        for _, row in topic_info.iterrows():
-            topic_id = row["Topic"]
-            if topic_id == -1:
-                continue
+            results = []
+            for _, row in topic_info.iterrows():
+                topic_id = row["Topic"]
+                if topic_id == -1:
+                    continue
 
-            topic_words = topic_model.get_topic(topic_id)
-            top_3_words = [word for word, _ in topic_words[:3]]
-            custom_name = " / ".join(top_3_words).capitalize()
+                topic_words = topic_model.get_topic(topic_id)
+                top_3_words = [word for word, _ in topic_words[:3]]
+                custom_name = " / ".join(top_3_words).capitalize()
 
-            results.append({
-                "topic_id": int(topic_id),
-                "topic_name": custom_name,
-                "document_count": int(row["Count"]),
-                "keywords": [{"word": w, "score": round(s, 4)} for w, s in topic_words[:10]],
-            })
+                results.append({
+                    "topic_id": int(topic_id),
+                    "topic_name": custom_name,
+                    "document_count": int(row["Count"]),
+                    "keywords": [{"word": w, "score": round(float(s), 4)} for w, s in topic_words[:10]],
+                })
 
-        return results
+            return results
+
+        except Exception as e:
+            print(f"[topic_model] BERTopic işlem hatası oluştu: {e}")
+            return []
 
 
 @lru_cache(maxsize=1)

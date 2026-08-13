@@ -39,7 +39,7 @@ from typing import Literal, Union
 from pydantic import BaseModel, Field
 
 SentimentLabel = Literal["positive", "negative", "neutral"]
-AnalysisKind = Literal["sentiment", "topics", "besttime"]
+AnalysisKind = Literal["sentiment", "topics", "besttime", "likes_baseline", "spam"]
 SubjectType = Literal["comment", "account"]  # DÜZELTME: hep küçük harf — "ACCOUNT" değil
 
 
@@ -58,6 +58,20 @@ class AnalyzeRequest(BaseModel):
 class SentimentPayload(BaseModel):
     label: SentimentLabel
     score: float = Field(..., ge=0.0, le=1.0)
+
+
+# ---------- kind="spam" (POST /internal/analyze) ----------
+
+class SpamPayload(BaseModel):
+    """
+    A3.4 — öğrenmeli sınıflandırıcı (bkz. spam_model.py/spam_serving.py).
+    Model DB'den CANLI eğitilmiyor (comments tablosunda is_spam etiketi yok);
+    offline etiketli veriyle eğitilip diske kaydedilmiş, servis bunu yükleyip
+    sadece davranışsal/metin feature'larını canlı hesaplayarak skorluyor.
+    """
+
+    is_spam: bool
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Modelin pozitif sınıf olasılığı")
 
 
 # ---------- kind="topics" (POST /internal/analyze-account) ----------
@@ -103,6 +117,23 @@ class BesttimePayload(BaseModel):
     heatmap: list[BesttimeCell] = Field(..., description="Her zaman 7*24=168 hücre")
 
 
+# ---------- kind="likes_baseline" (POST /internal/analyze-account) ----------
+
+class LikesBaselinePayload(BaseModel):
+    """
+    Model TEK/GLOBAL — tüm hesaplardan havuzlanmış veriyle eğitiliyor
+    (bkz. likes_baseline.py, likes_model.py). Bu payload'daki metrikler o
+    global modelin, SADECE bu hesabın test kesitindeki performansı —
+    hesap başına ayrı bir model YOK.
+    """
+
+    model_type: str  # "ridge" | "gradient_boosting"
+    mae: float = Field(..., ge=0.0)
+    naive_mae: float = Field(..., ge=0.0, description="Naif taban çizgisi: son 10 gönderi ortalaması")
+    beats_naive: bool
+    sample_size: int = Field(..., ge=0, description="Bu hesabın test kesitindeki gönderi sayısı")
+
+
 # ---------- ortak ----------
 
 class AnalysisResultRow(BaseModel):
@@ -111,7 +142,7 @@ class AnalysisResultRow(BaseModel):
     subject_type: SubjectType
     subject_id: str
     kind: AnalysisKind
-    payload: Union[SentimentPayload, TopicPayload, BesttimePayload]
+    payload: Union[SentimentPayload, TopicPayload, BesttimePayload, LikesBaselinePayload, SpamPayload]
     model_version: str
 
 
