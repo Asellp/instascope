@@ -1,3 +1,4 @@
+<!-- apps/web/app/pages/forgot-password.vue -->
 <template>
   <div class="auth-layout">
     <div class="ambient-glow glow-1"></div>
@@ -15,14 +16,19 @@
       <div class="auth-header">
         <div class="logo-box">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
-            <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
-            <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+            <path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"></path>
+            <circle cx="12" cy="10" r="3"></circle>
           </svg>
         </div>
         <h1 class="auth-title font-serif-display">InstaScope</h1>
-        <p class="auth-sub">Hesabınızı oluşturun ve analizlere hemen başlayın</p>
+        <p class="auth-sub">Hesabınıza ait e-posta adresinizi girin, sıfırlama bağlantısını iletelim.</p>
       </div>
+
+      <transition name="fade">
+        <div v-if="successMessage" class="alert-banner success">
+          ✅ {{ successMessage }}
+        </div>
+      </transition>
 
       <transition name="fade">
         <div v-if="displayError" class="error-banner">
@@ -30,70 +36,29 @@
         </div>
       </transition>
 
-      <form @submit.prevent="handleRegister" class="auth-form">
-        <div class="form-group">
-          <label>AD SOYAD</label>
-          <div class="input-wrapper">
-            <span class="input-icon">👤</span>
-            <input v-model="name" type="text" placeholder="Nazgül Aksoy" required />
-          </div>
-        </div>
-
+      <form v-if="!successMessage" class="auth-form" @submit.prevent="handleForgotPassword">
         <div class="form-group">
           <label>E-POSTA ADRESİ</label>
           <div class="input-wrapper">
             <span class="input-icon">✉️</span>
-            <input v-model="email" type="email" placeholder="ornek@instascope.io" required />
+            <input v-model="email" type="email" placeholder="ornek@domain.com" required />
           </div>
         </div>
 
-        <div class="form-group">
-          <label>ŞİFRE</label>
-          <div class="input-wrapper">
-            <span class="input-icon">🔒</span>
-            <input
-              v-model="password"
-              :type="showPassword ? 'text' : 'password'"
-              placeholder="••••••••"
-              required
-            />
-            <button
-              type="button"
-              class="toggle-visibility-btn"
-              @click="showPassword = !showPassword"
-              :aria-label="showPassword ? 'Şifreyi gizle' : 'Şifreyi göster'"
-              tabindex="-1"
-            >
-              {{ showPassword ? '🙈' : '👁️' }}
-            </button>
-          </div>
-        </div>
-
-        <div class="terms-group">
-          <label class="checkbox-label">
-            <input type="checkbox" v-model="acceptTerms" />
-            <span>
-              <a href="#" class="terms-link">Kullanım Koşulları</a> ve
-              <a href="#" class="terms-link">Gizlilik Politikası</a>'nı kabul ediyorum.
-            </span>
-          </label>
-        </div>
-
-        <button type="submit" class="submit-btn" :disabled="isLoading || retryCountdown > 0">
-          <span v-if="isLoading" class="spinner"></span>
+        <button type="submit" class="submit-btn" :disabled="loading || retryCountdown > 0">
+          <span v-if="loading" class="spinner"></span>
           <span>
             {{
               retryCountdown > 0
                 ? `${retryCountdown} saniye sonra tekrar deneyin`
-                : (isLoading ? 'Hesap Oluşturuluyor...' : 'Aramıza Katıl →')
+                : (loading ? 'Gönderiliyor...' : 'Sıfırlama Bağlantısı Gönder')
             }}
           </span>
         </button>
       </form>
 
       <div class="auth-footer">
-        Zaten bir hesabınız var mı?
-        <NuxtLink to="/login" class="auth-link">Giriş Yap</NuxtLink>
+        <NuxtLink to="/login" class="auth-link">← Giriş Sayfasına Dön</NuxtLink>
       </div>
     </div>
   </div>
@@ -101,25 +66,19 @@
 
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '~/stores/auth'
 import { useApi } from '~/composables/useApi'
 import { useTheme } from '~/composables/useTheme'
 
-definePageMeta({ layout: false })
-
-const name = ref('')
-const email = ref('')
-const password = ref('')
-const showPassword = ref(false)
-const acceptTerms = ref(false)
-const isLoading = ref(false)
-const errorMessage = ref('')
-const retryCountdown = ref(0)
+definePageMeta({
+  layout: false
+})
 
 const api = useApi()
-const authStore = useAuthStore()
-const router = useRouter()
+const email = ref('')
+const loading = ref(false)
+const successMessage = ref('')
+const errorMessage = ref('')
+const retryCountdown = ref(0)
 const { isDark, toggleTheme } = useTheme('dark')
 
 let countdownTimer: ReturnType<typeof setInterval> | null = null
@@ -131,6 +90,8 @@ function clearCountdownTimer() {
   }
 }
 
+// Backend'de forgot-password 15 dakikada 3 istekle sınırlı (900sn),
+// bu yüzden varsayılan bekleme süresi login/register'dan farklı.
 function startRetryCountdown(seconds: number) {
   clearCountdownTimer()
   retryCountdown.value = Math.max(1, Math.ceil(seconds))
@@ -157,43 +118,35 @@ function extractRetryAfterSeconds(err: any): number | null {
 
 const displayError = computed(() => {
   if (retryCountdown.value > 0) {
-    return `Çok fazla deneme yaptınız. Lütfen ${retryCountdown.value} saniye sonra tekrar deneyin.`
+    const mins = Math.floor(retryCountdown.value / 60)
+    const secs = retryCountdown.value % 60
+    const readable = mins > 0 ? `${mins} dk ${secs} sn` : `${secs} sn`
+    return `Çok fazla deneme yaptınız. Lütfen ${readable} sonra tekrar deneyin.`
   }
   return errorMessage.value
 })
 
 onUnmounted(() => clearCountdownTimer())
 
-const handleRegister = async () => {
+async function handleForgotPassword() {
   if (retryCountdown.value > 0) return
 
-  if (!name.value || !email.value || !password.value) {
-    errorMessage.value = 'Lütfen tüm alanları doldurun.'
-    return
-  }
-
-  if (!acceptTerms.value) {
-    errorMessage.value = 'Lütfen kullanım koşullarını kabul edin.'
-    return
-  }
-
-  isLoading.value = true
+  loading.value = true
   errorMessage.value = ''
-
+  successMessage.value = ''
   try {
-    const res = await api.register(name.value, email.value, password.value)
-    authStore.setUser(res.user)
-    router.push('/')
+    const res = await api.forgotPassword(email.value)
+    successMessage.value = res.message || 'Şifre sıfırlama bağlantısı e-posta adresinize gönderildi.'
   } catch (err: any) {
     const status = err?.response?.status ?? err?.statusCode
     if (status === 429) {
-      const retryAfter = extractRetryAfterSeconds(err) ?? 60
+      const retryAfter = extractRetryAfterSeconds(err) ?? 900
       startRetryCountdown(retryAfter)
     } else {
-      errorMessage.value = err instanceof Error ? err.message : 'Kayıt olunurken bir hata oluştu.'
+      errorMessage.value = err?.data?.message || err?.message || 'Bir hata oluştu, lütfen tekrar deneyin.'
     }
   } finally {
-    isLoading.value = false
+    loading.value = false
   }
 }
 </script>
@@ -246,16 +199,16 @@ const handleRegister = async () => {
   pointer-events: none;
   transition: opacity 0.3s ease, background 0.3s ease;
 }
-.glow-1 { top: -120px; right: -100px; background: rgba(168, 85, 247, 0.7); }
-.glow-2 { bottom: -120px; left: -100px; background: rgba(14, 165, 233, 0.5); }
+.glow-1 { top: -120px; right: -100px; background: rgba(14, 165, 233, 0.7); }
+.glow-2 { bottom: -120px; left: -100px; background: rgba(193, 53, 132, 0.5); }
 
 .hero-style-card {
   width: 100%;
   max-width: 420px;
-  background: radial-gradient(circle at 92% 8%, rgba(168, 85, 247, 0.25) 0%, rgba(131, 58, 180, 0.14) 40%, transparent 70%),
-              radial-gradient(circle at 8% 92%, rgba(14, 165, 233, 0.12) 0%, transparent 55%),
+  background: radial-gradient(circle at 92% 8%, rgba(14, 165, 233, 0.22) 0%, rgba(131, 58, 180, 0.12) 40%, transparent 70%),
+              radial-gradient(circle at 8% 92%, rgba(193, 53, 132, 0.1) 0%, transparent 55%),
               linear-gradient(180deg, #11131a 0%, #0a0c12 100%);
-  border: 1px solid rgba(168, 85, 247, 0.25);
+  border: 1px solid rgba(14, 165, 233, 0.22);
   border-radius: var(--radius-card, 22px);
   padding: 36px 32px;
   backdrop-filter: blur(20px);
@@ -281,7 +234,7 @@ const handleRegister = async () => {
 }
 
 .auth-title { font-size: 2.1rem; font-weight: 400; color: #f8fafc; }
-.auth-sub { font-size: 0.82rem; color: #94a3b8; margin-top: 4px; }
+.auth-sub { font-size: 0.82rem; color: #94a3b8; margin-top: 4px; line-height: 1.5; }
 
 .error-banner {
   background: rgba(239, 68, 68, 0.15);
@@ -294,6 +247,18 @@ const handleRegister = async () => {
   text-align: center;
 }
 
+.alert-banner.success {
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  color: #4ade80;
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  margin-bottom: 20px;
+  text-align: center;
+  line-height: 1.4;
+}
+
 .auth-form { display: flex; flex-direction: column; gap: 16px; }
 
 .form-group { display: flex; flex-direction: column; gap: 6px; }
@@ -302,27 +267,12 @@ const handleRegister = async () => {
 .input-wrapper { position: relative; display: flex; align-items: center; }
 .input-icon { position: absolute; left: 14px; font-size: 0.88rem; opacity: 0.7; }
 
-.toggle-visibility-btn {
-  position: absolute;
-  right: 10px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 0.92rem;
-  opacity: 0.65;
-  padding: 4px 6px;
-  display: flex;
-  align-items: center;
-  transition: opacity 0.2s ease;
-}
-.toggle-visibility-btn:hover { opacity: 1; }
-
 .form-group input {
   width: 100%;
   background: rgba(15, 17, 26, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: #f8fafc;
-  padding: 12px 40px 12px 40px;
+  padding: 12px 14px 12px 40px;
   border-radius: 12px;
   outline: none;
   font-size: 0.88rem;
@@ -330,29 +280,9 @@ const handleRegister = async () => {
 }
 
 .form-group input:focus {
-  border-color: #a855f7;
-  box-shadow: 0 0 12px rgba(168, 85, 247, 0.3);
+  border-color: #0ea5e9;
+  box-shadow: 0 0 12px rgba(14, 165, 233, 0.3);
 }
-
-.terms-group { margin-top: 2px; }
-
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.76rem;
-  color: #94a3b8;
-  cursor: pointer;
-}
-
-.checkbox-label input {
-  accent-color: #ec4899;
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-}
-
-.terms-link { color: #ec4899; font-weight: 600; text-decoration: underline; }
 
 .submit-btn {
   width: 100%;
@@ -391,14 +321,14 @@ const handleRegister = async () => {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.auth-footer { margin-top: 24px; text-align: center; font-size: 0.82rem; color: #94a3b8; }
-.auth-link { color: #ec4899; font-weight: 700; text-decoration: none; margin-left: 4px; }
+.auth-footer { margin-top: 24px; text-align: center; font-size: 0.82rem; }
+.auth-link { color: #ec4899; font-weight: 700; text-decoration: none; }
 .auth-link:hover { text-decoration: underline; color: #f43f5e; }
 
 [data-theme="light"] .auth-layout {
   background:
-    radial-gradient(circle at 85% 15%, rgba(244, 63, 94, 0.18) 0%, rgba(251, 146, 60, 0.12) 35%, transparent 65%),
-    radial-gradient(circle at 15% 85%, rgba(2, 132, 199, 0.22) 0%, transparent 60%),
+    radial-gradient(circle at 85% 15%, rgba(2, 132, 199, 0.18) 0%, rgba(251, 146, 60, 0.12) 35%, transparent 65%),
+    radial-gradient(circle at 15% 85%, rgba(244, 63, 94, 0.16) 0%, transparent 60%),
     #f1f5f9;
 }
 
@@ -409,22 +339,16 @@ const handleRegister = async () => {
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
 }
 
-[data-theme="light"] .glow-2 {
-  background: rgba(2, 132, 199, 0.5) !important;
-}
-
 [data-theme="light"] .hero-style-card {
-  background: radial-gradient(circle at 90% 10%, rgba(244, 63, 94, 0.15) 0%, rgba(251, 146, 60, 0.1) 35%, transparent 65%),
-              radial-gradient(circle at 10% 90%, rgba(2, 132, 199, 0.15) 0%, transparent 60%),
+  background: radial-gradient(circle at 90% 10%, rgba(2, 132, 199, 0.14) 0%, rgba(251, 146, 60, 0.1) 35%, transparent 65%),
+              radial-gradient(circle at 10% 90%, rgba(244, 63, 94, 0.12) 0%, transparent 60%),
               linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   border: 2px solid rgba(15, 23, 42, 0.22);
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 [data-theme="light"] .auth-title { color: #0f172a; }
-[data-theme="light"] .auth-sub,
-[data-theme="light"] .auth-footer,
-[data-theme="light"] .checkbox-label { color: #334155; }
+[data-theme="light"] .auth-sub { color: #334155; }
 [data-theme="light"] .form-group label { color: #0f172a; }
 
 [data-theme="light"] .form-group input {
@@ -440,5 +364,6 @@ const handleRegister = async () => {
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.2);
 }
 
-[data-theme="light"] .terms-link { color: #0284c7; }
+[data-theme="light"] .auth-link { color: #0284c7; }
+[data-theme="light"] .auth-link:hover { color: #0369a1; }
 </style>

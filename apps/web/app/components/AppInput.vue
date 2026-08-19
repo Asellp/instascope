@@ -36,28 +36,33 @@ defineEmits(['update:modelValue'])
 .input-label {
   font-size: 0.85rem;
   font-weight: 500;
-  color: var(--text-muted);
+  color: var(--muted-foreground);
 }
 
 .app-input {
-  background: rgba(10, 14, 23, 0.6);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 10px;
   padding: 12px 16px;
-  color: var(--text-main);
+  color: var(--foreground);
   font-size: 0.95rem;
   outline: none;
   transition: all 0.2s ease;
+  width: 100%;
 }
 
 .app-input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-glow);
-  background: rgba(10, 14, 23, 0.9);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.15);
+}
+
+.app-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .input-error {
   font-size: 0.8rem;
-  color: var(--danger);
+  color: var(--destructive);
 }
 </style>

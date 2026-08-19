@@ -197,3 +197,125 @@ button:active, .btn-primary-grad:active {
 .content-wrapper.expanded {
   margin-left: 76px;
 }
+
+/* ==========================================
+   MOBİL / TABLET RESPONSIVE UYARLAMALARI (375px)
+   ========================================== */
+@media (max-width: 768px) {
+  html, body {
+    overflow-x: hidden !important;
+    width: 100vw;
+  }
+
+  .page-title {
+    font-size: 2rem !important;
+  }
+
+  .hero-title {
+    font-size: 1.8rem !important;
+  }
+
+  .panel-card,
+  .profile-header-card,
+  .reports-list-card,
+  .settings-card,
+  .hero-card,
+  .hero-report-card,
+  .report-deep-analysis-card {
+    padding: 16px !important;
+    border-radius: 16px !important;
+  }
+
+  .grid-2-1,
+  .topics-grid,
+  .comparison-grid,
+  .settings-layout,
+  .analysis-row-grid,
+  .form-grid {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  .kpi-grid,
+  .report-kpi-grid {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)) !important;
+    gap: 12px !important;
+  }
+
+  .custom-table-wrapper,
+  .heatmap-table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .header-actions,
+  .hero-actions,
+  .bottom-actions-bar {
+    width: 100%;
+    flex-direction: column;
+    gap: 8px !important;
+  }
+
+  .header-actions button,
+  .hero-actions button,
+  .bottom-actions-bar button {
+    width: 100% !important;
+    justify-content: center;
+  }
+}
+
+/* @MEDIA PRINT / PDF DÜZENLEMESİ */
+@media print {
+  /*
+    KÖK DÜZELTME: main.css'in geri kalanı (ve bu dosyayı okuyan HER
+    component — Vue component'lerin scoped stilleri dahil) renk için
+    var(--foreground), var(--muted-foreground), var(--border) vb.
+    kullanıyor. Bu değişkenler koyu temada neredeyse-beyaza yakın
+    değerlere sahip (ör. --foreground: #f8fafc). Print'te arka plan
+    beyaza zorlanınca (aşağıdaki body/.page-body kuralı), bu değişkenleri
+    KENDİLERİNİ print'e göre yeniden tanımlamadan bırakırsak "beyaz
+    üstüne beyaz" metin oluşuyor — İçerik Karışımı legend'indeki yüzdeler
+    (.legend-item .val { color: var(--foreground) }), donut merkezindeki
+    sayı (.center-num) gibi TÜM var(--foreground)/var(--muted-foreground)
+    kullanan yerler bundan etkileniyordu.
+
+    Tek bir yerde (:root) bu değişkenleri !important ile print'e özgü
+    okunabilir değerlere çevirmek, tema seçimi (açık/koyu) ne olursa olsun
+    ve hangi component kullanılırsa kullanılsın (mevcut veya gelecekte
+    eklenecek), otomatik olarak doğru sonucu veriyor — her component'i
+    tek tek yamalamaya gerek kalmıyor.
+  */
+  :root {
+    --background: #ffffff !important;
+    --foreground: #111827 !important;
+    --surface: #f9fafb !important;
+    --surface-hover: #f3f4f6 !important;
+    --muted: #f3f4f6 !important;
+    --muted-foreground: #4b5563 !important;
+    --border: rgba(0, 0, 0, 0.12) !important;
+    --border-strong: rgba(0, 0, 0, 0.22) !important;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .no-print,
+  .app-sidebar,
+  .sidebar,
+  .top-header,
+  .mobile-header,
+  header,
+  nav {
+    display: none !important;
+  }
+
+  body, .app-layout, .content-wrapper, .page-body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+  }
+}

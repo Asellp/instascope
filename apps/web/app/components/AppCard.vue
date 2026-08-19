@@ -20,26 +20,27 @@ defineProps({ title: String })
 
 <style scoped>
 .app-card {
-  background: var(--bg-card);
+  background: var(--surface);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  box-shadow: var(--card-glow);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
   transition: all 0.3s ease;
 }
 
 .app-card:hover {
-  border-color: var(--border-color-hover);
+  border-color: var(--border-strong);
   transform: translateY(-2px);
 }
 
 .card-header {
   padding: 18px 24px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border);
   font-size: 1.05rem;
   font-weight: 600;
   letter-spacing: -0.01em;
+  color: var(--foreground);
 }
 
 .card-body {
@@ -48,7 +49,7 @@ defineProps({ title: String })
 
 .card-footer {
   padding: 16px 24px;
-  border-top: 1px solid var(--border-color);
-  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid var(--border);
+  background: var(--background);
 }
 </style>

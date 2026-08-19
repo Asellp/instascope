@@ -1,6 +1,7 @@
+<!-- apps/web/app/pages/index.vue -->
 <template>
   <div class="dashboard-page">
-    
+
     <!-- 1. HERO BANNER -->
     <div class="hero-card">
       <div class="hero-badge pulse-anim">
@@ -8,32 +9,45 @@
           <span class="pulse-dot-ring"></span>
           <span style="width: 6px; height: 6px; background: var(--brand); border-radius: 50%;"></span>
         </span>
-        Haftalık özet · 22 Tem
+        Son 30 gün özeti · {{ todayLabel }}
       </div>
-      
-      <h1 class="hero-title font-serif-display">
-        Bu hafta <span class="text-gradient">184.2K</span> takipçi ile 12 gönderi yayında.
+
+      <h1 v-if="chartsLoading" class="hero-title font-serif-display">
+        <span class="skeleton-inline">Yükleniyor…</span>
+      </h1>
+      <h1 v-else class="hero-title font-serif-display">
+        Bu dönem <span class="text-gradient">{{ followersDisplay }}</span> takipçi ile
+        {{ totalPostsDisplay !== null ? totalPostsDisplay : '—' }} gönderi yayında.
       </h1>
 
-      <p class="hero-desc">
-        Etkileşim oranının <strong>%0.9 puan</strong> arttı. En iyi performansı <strong>reel</strong> içerikler gösterdi. AI önerisine göre bir sonraki paylaşımın için en iyi zaman <strong>Perşembe 19:00</strong>.
+      <p v-if="!chartsLoading" class="hero-desc">
+        <template v-if="overview?.followerGrowth">
+          Takipçi artışın <strong>{{ formatSignedPercent(overview.followerGrowth.percentChange) }}</strong> oldu.
+        </template>
+        <template v-if="overview">
+          Ortalama etkileşim oranın <strong>%{{ overview.averageEngagementRate }}</strong>.
+        </template>
+        <template v-if="topPerformingLabel">
+          En iyi performansı <strong>{{ topPerformingLabel }}</strong> içerikler gösterdi.
+        </template>
+        AI önerisine göre bir sonraki paylaşımın için en iyi zaman
+        <strong>{{ peakSlotLabel || 'henüz hesaplanmadı' }}</strong>.
       </p>
 
       <div class="hero-footer">
         <div class="pill-group">
-          <span class="pill green">● {{ accounts.length || 4 }} hesap aktif</span>
+          <span class="pill green">● {{ accounts.length }} hesap takip ediliyor</span>
           <span class="pill blue">⚡ Otomasyon açık</span>
-          <span class="pill amber">⏱️ Sonraki toplama 42 dk</span>
         </div>
 
         <div class="hero-actions">
-          <button class="btn-dark">Rapor indir</button>
-          <button class="btn-primary-grad">+ Hesap ekle</button>
+          <NuxtLink to="/reports" class="btn-dark" style="text-decoration: none; display: inline-flex; align-items: center;">Rapor indir</NuxtLink>
+          <NuxtLink to="/accounts" class="btn-primary-grad" style="text-decoration: none; display: inline-flex; align-items: center;">+ Hesap ekle</NuxtLink>
         </div>
       </div>
     </div>
 
-    <!-- 2. AMBIENT GLOW & SKELETON SUPPORTED KPI KARTLARI -->
+    <!-- 2. KPI KARTLARI -->
     <div class="kpi-grid">
       <!-- Takipçi -->
       <div class="kpi-card bg-pink-tint ambient-pink">
@@ -42,9 +56,13 @@
             <span class="kpi-label">TAKİPÇİ</span>
             <div class="kpi-icon pink">📈</div>
           </div>
-          <div v-if="loading" class="skeleton-box" style="height: 36px; width: 120px; margin-top: 6px;"></div>
-          <div v-else class="kpi-value font-serif-display">184.2K</div>
-          <div class="kpi-sub green">↗ +4.8% <span class="muted">son 30 gün</span></div>
+          <div v-if="chartsLoading" class="skeleton-box" style="height: 36px; width: 120px; margin-top: 6px;"></div>
+          <div v-else class="kpi-value font-serif-display">{{ followersDisplay }}</div>
+          <div v-if="!chartsLoading && overview?.followerGrowth" :class="['kpi-sub', overview.followerGrowth.percentChange >= 0 ? 'green' : 'red']">
+            {{ overview.followerGrowth.percentChange >= 0 ? '↗' : '↘' }} {{ formatSignedPercent(overview.followerGrowth.percentChange) }}
+            <span class="muted">son 30 gün</span>
+          </div>
+          <div v-else-if="!chartsLoading" class="kpi-sub"><span class="muted">Henüz karşılaştırma verisi yok</span></div>
         </div>
 
         <div class="kpi-chart-wrapper">
@@ -55,9 +73,8 @@
                 <stop offset="100%" stop-color="#ec4899" stop-opacity="0.0" />
               </linearGradient>
             </defs>
-            <path d="M0,32 Q20,25 40,28 T80,12 T100,6 L100,40 L0,40 Z" fill="url(#pinkGrad)" />
-            <path d="M0,32 Q20,25 40,28 T80,12 T100,6" fill="none" stroke="#ec4899" stroke-width="2.5" stroke-linecap="round" />
-            <circle cx="100" cy="6" r="3" fill="#ec4899" />
+            <path :d="sparkPath(followerSeries)" fill="url(#pinkGrad)" />
+            <path :d="sparkLine(followerSeries)" fill="none" stroke="#ec4899" stroke-width="2.5" stroke-linecap="round" />
           </svg>
         </div>
       </div>
@@ -69,9 +86,9 @@
             <span class="kpi-label">ETKİLEŞİM ORANI</span>
             <div class="kpi-icon violet">💜</div>
           </div>
-          <div v-if="loading" class="skeleton-box" style="height: 36px; width: 100px; margin-top: 6px;"></div>
-          <div v-else class="kpi-value font-serif-display">%6.42</div>
-          <div class="kpi-sub green">↗ +0.9% <span class="muted">son 30 gün</span></div>
+          <div v-if="chartsLoading" class="skeleton-box" style="height: 36px; width: 100px; margin-top: 6px;"></div>
+          <div v-else class="kpi-value font-serif-display">{{ overview ? `%${overview.averageEngagementRate}` : '—' }}</div>
+          <div v-if="!chartsLoading" class="kpi-sub"><span class="muted">30 günlük ortalama</span></div>
         </div>
 
         <div class="kpi-chart-wrapper">
@@ -82,9 +99,8 @@
                 <stop offset="100%" stop-color="#a855f7" stop-opacity="0.0" />
               </linearGradient>
             </defs>
-            <path d="M0,35 Q25,30 50,18 T80,12 T100,4 L100,40 L0,40 Z" fill="url(#purpleGrad)" />
-            <path d="M0,35 Q25,30 50,18 T80,12 T100,4" fill="none" stroke="#a855f7" stroke-width="2.5" stroke-linecap="round" />
-            <circle cx="100" cy="4" r="3" fill="#a855f7" />
+            <path :d="sparkPath(engagementSpark)" fill="url(#purpleGrad)" />
+            <path :d="sparkLine(engagementSpark)" fill="none" stroke="#a855f7" stroke-width="2.5" stroke-linecap="round" />
           </svg>
         </div>
       </div>
@@ -93,12 +109,14 @@
       <div class="kpi-card bg-cyan-tint ambient-cyan">
         <div class="kpi-content">
           <div class="kpi-top">
-            <span class="kpi-label">ORT. YORUM</span>
+            <span class="kpi-label">ORTALAMA YORUM</span>
             <div class="kpi-icon cyan">💬</div>
           </div>
-          <div v-if="loading" class="skeleton-box" style="height: 36px; width: 80px; margin-top: 6px;"></div>
-          <div v-else class="kpi-value font-serif-display">312</div>
-          <div class="kpi-sub red">↘ -2.1% <span class="muted">son 30 gün</span></div>
+          <div v-if="chartsLoading" class="skeleton-box" style="height: 36px; width: 80px; margin-top: 6px;"></div>
+          <div v-else class="kpi-value font-serif-display">{{ avgComments !== null ? avgComments : '—' }}</div>
+          <div v-if="!chartsLoading" class="kpi-sub">
+            <span class="muted">{{ last30DaysPosts.length }} gönderi üzerinden</span>
+          </div>
         </div>
 
         <div class="kpi-chart-wrapper">
@@ -109,9 +127,8 @@
                 <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.0" />
               </linearGradient>
             </defs>
-            <path d="M0,8 Q30,12 60,24 T100,34 L100,40 L0,40 Z" fill="url(#cyanGrad)" />
-            <path d="M0,8 Q30,12 60,24 T100,34" fill="none" stroke="#06b6d4" stroke-width="2.5" stroke-linecap="round" />
-            <circle cx="100" cy="34" r="3" fill="#06b6d4" />
+            <path :d="sparkPath(commentsSpark)" fill="url(#cyanGrad)" />
+            <path :d="sparkLine(commentsSpark)" fill="none" stroke="#06b6d4" stroke-width="2.5" stroke-linecap="round" />
           </svg>
         </div>
       </div>
@@ -120,12 +137,14 @@
       <div class="kpi-card bg-orange-tint ambient-orange">
         <div class="kpi-content">
           <div class="kpi-top">
-            <span class="kpi-label">ERİŞİM (30G)</span>
+            <span class="kpi-label">ERİŞİM</span>
             <div class="kpi-icon orange">👁️</div>
           </div>
-          <div v-if="loading" class="skeleton-box" style="height: 36px; width: 110px; margin-top: 6px;"></div>
-          <div v-else class="kpi-value font-serif-display">2.1M</div>
-          <div class="kpi-sub green">↗ +12.4% <span class="muted">son 30 gün</span></div>
+          <div v-if="chartsLoading" class="skeleton-box" style="height: 36px; width: 110px; margin-top: 6px;"></div>
+          <div v-else class="kpi-value font-serif-display">{{ totalReachDisplay }}</div>
+          <div v-if="!chartsLoading" class="kpi-sub">
+            <span class="muted">{{ last30DaysPosts.length }} gönderi toplamı</span>
+          </div>
         </div>
 
         <div class="kpi-chart-wrapper">
@@ -136,150 +155,154 @@
                 <stop offset="100%" stop-color="#f97316" stop-opacity="0.0" />
               </linearGradient>
             </defs>
-            <path d="M0,30 Q35,22 70,14 T100,4 L100,40 L0,40 Z" fill="url(#orangeGrad)" />
-            <path d="M0,30 Q35,22 70,14 T100,4" fill="none" stroke="#f97316" stroke-width="2.5" stroke-linecap="round" />
-            <circle cx="100" cy="4" r="3" fill="#f97316" />
+            <path :d="sparkPath(reachSpark)" fill="url(#orangeGrad)" />
+            <path :d="sparkLine(reachSpark)" fill="none" stroke="#f97316" stroke-width="2.5" stroke-linecap="round" />
           </svg>
         </div>
       </div>
     </div>
 
-    <!-- 3. İNTERAKTİF HOVER TOOLTİP'Lİ TAKİPÇİ BÜYÜMESİ -->
+    <!-- 3. TAKİPÇİ BÜYÜMESİ + İÇERİK KARIŞIMI (CANLI FİLTRELİ - F3.4) -->
     <div class="grid-2-1">
       <div class="panel-card">
         <div class="panel-header">
           <div>
             <h3 class="panel-title">Takipçi büyümesi</h3>
-            <p class="panel-sub">Son 30 gün · günlük</p>
+            <p class="panel-sub">Son {{ selectedGrowthRange }} gün · günlük</p>
           </div>
           <div class="time-pills">
-            <button>7g</button>
-            <button class="active">30g</button>
-            <button>90g</button>
+            <button
+              v-for="range in [7, 30, 90] as const"
+              :key="`growth-${range}`"
+              :class="{ active: selectedGrowthRange === range }"
+              @click="changeGrowthRange(range)"
+            >
+              {{ range }}g
+            </button>
           </div>
         </div>
 
-        <div class="chart-area" @mousemove="handleChartHover" @mouseleave="hoverPos = null">
-          <svg viewBox="0 0 500 150" class="main-chart">
-            <defs>
-              <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#ec4899" stop-opacity="0.35" />
-                <stop offset="100%" stop-color="#ec4899" stop-opacity="0.0" />
-              </linearGradient>
-            </defs>
-            <path d="M0,120 Q50,100 100,105 T200,80 T300,60 T400,45 T500,15 L500,150 L0,150 Z" fill="url(#chartGrad)" />
-            <path d="M0,120 Q50,100 100,105 T200,80 T300,60 T400,45 T500,15" fill="none" stroke="#ec4899" stroke-width="3" />
-            <circle cx="500" cy="15" r="5" fill="#f97316" />
-
-            <!-- Canlı Hover Çizgisi -->
-            <line v-if="hoverPos" :x1="hoverPos.x" y1="0" :x2="hoverPos.x" y2="150" stroke="rgba(255,255,255,0.2)" stroke-dasharray="4 4" />
-          </svg>
-
-          <!-- Floating Hover Tooltip -->
-          <div v-if="hoverPos" class="custom-tooltip" :style="{ left: hoverPos.x + 'px', top: '20px' }">
-            📅 {{ hoverPos.date }} — <strong>{{ hoverPos.value }}</strong> Takipçi
-          </div>
+        <div v-if="!chartsLoading && followerSeries.length === 0" class="chart-empty-note">
+          <AppEmptyState
+            title="Takipçi verisi henüz yok"
+            description="Backend, hesap büyüme geçmişini henüz kaydetmedi. Toplama süreci ilerledikçe burada görünecek."
+          />
         </div>
+        <LineChart
+          v-else
+          :data="followerSeries"
+          :loading="chartsLoading"
+          color="#ec4899"
+          height="220px"
+          :show-axis="true"
+          :value-formatter="(v) => `${v.toLocaleString('tr-TR')} takipçi`"
+        />
 
         <div class="chart-footer-stats">
           <div>
             <span class="stat-lbl">YENİ TAKİPÇİ</span>
-            <span class="stat-num pink">+8.4K</span>
+            <span class="stat-num pink">{{ newFollowersDisplay }}</span>
           </div>
           <div>
-            <span class="stat-lbl">ETKİLEŞİM</span>
-            <span class="stat-num purple">312K</span>
+            <span class="stat-lbl">ORT. ETKİLEŞİM</span>
+            <span class="stat-num purple">{{ overview ? `%${overview.averageEngagementRate}` : '—' }}</span>
           </div>
           <div>
-            <span class="stat-lbl">ERİŞİM</span>
-            <span class="stat-num cyan">2.1M</span>
+            <span class="stat-lbl">TOPLAM ERİŞİM</span>
+            <span class="stat-num cyan">{{ totalReachDisplay }}</span>
           </div>
         </div>
       </div>
 
       <div class="panel-card">
-        <h3 class="panel-title">İçerik karışımı</h3>
-        <p class="panel-sub">Gönderi tipine göre</p>
-
-        <div class="donut-wrapper">
-          <svg viewBox="0 0 100 100" class="donut-chart">
-            <circle cx="50" cy="50" r="38" fill="none" stroke="#ec4899" stroke-width="12" stroke-dasharray="120 240" stroke-dashoffset="0" />
-            <circle cx="50" cy="50" r="38" fill="none" stroke="#a855f7" stroke-width="12" stroke-dasharray="65 240" stroke-dashoffset="-120" />
-            <circle cx="50" cy="50" r="38" fill="none" stroke="#06b6d4" stroke-width="12" stroke-dasharray="45 240" stroke-dashoffset="-185" />
-          </svg>
-          <div class="donut-center">
-            <span class="center-num font-serif-display">100</span>
-            <span class="center-lbl">GÖNDERİ</span>
+        <div class="panel-header">
+          <div>
+            <h3 class="panel-title">İçerik karışımı</h3>
+            <p class="panel-sub">Son {{ selectedMixRange }} gün gönderileri</p>
+          </div>
+          <div class="time-pills">
+            <button
+              v-for="range in [7, 30, 90] as const"
+              :key="`mix-${range}`"
+              :class="{ active: selectedMixRange === range }"
+              @click="selectedMixRange = range"
+            >
+              {{ range }}g
+            </button>
           </div>
         </div>
 
-        <div class="legend-list">
-          <div class="legend-item"><span class="dot pink"></span> Reel <span class="val">52%</span></div>
-          <div class="legend-item"><span class="dot purple"></span> Carousel <span class="val">28%</span></div>
-          <div class="legend-item"><span class="dot cyan"></span> Foto <span class="val">20%</span></div>
+        <div v-if="!chartsLoading && filteredMixPosts.length === 0" class="chart-empty-note">
+          <AppEmptyState
+            title="Gönderi verisi yok"
+            description="Seçilen zaman aralığında analiz edilecek gönderi bulunamadı."
+          />
         </div>
+        <template v-else>
+          <div class="donut-wrapper">
+            <DonutChart
+              :slices="contentMix"
+              :loading="chartsLoading"
+              height="170px"
+              :center-value="String(filteredMixPosts.length)"
+              center-label="GÖNDERİ"
+            />
+          </div>
+
+          <div class="legend-list">
+            <div v-for="slice in contentMix" :key="slice.label" class="legend-item">
+              <span class="dot" :style="{ background: slice.color }"></span>
+              {{ slice.label }} <span class="val">{{ slice.value }}%</span>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
 
-    <!-- 4. HOVER POP-UP'LI ISI HARİTASI -->
-    <div class="grid-2-1">
-      <div class="panel-card">
-        <div class="panel-header">
-          <div>
-            <h3 class="panel-title">Etkileşim ısı haritası</h3>
-            <p class="panel-sub">Gün × saat · son 4 hafta</p>
-          </div>
-          <span class="highlight-badge pulse-anim">Perşembe 19:00 zirvede</span>
+    <!-- 3.5 İÇERİK TİPİNE GÖRE ETKİLEŞİM (CANLI FİLTRELİ - F3.4) -->
+    <div class="panel-card">
+      <div class="panel-header">
+        <div>
+          <h3 class="panel-title">İçerik tipine göre etkileşim</h3>
+          <p class="panel-sub">Son {{ selectedPerfRange }} gün ortalama etkileşim oranı (%)</p>
         </div>
-
-        <div class="heatmap-grid">
-          <div class="heatmap-row" v-for="day in ['Pt', 'Sa', 'Ça', 'Pe', 'Cu', 'Ct', 'Pz']" :key="day">
-            <span class="day-lbl">{{ day }}</span>
-            <div class="heat-cells">
-              <div 
-                v-for="i in 12" 
-                :key="i" 
-                :class="['heat-cell', getHeatClass(day, i)]"
-                :title="`${day} ${i*2}:00 — Etkileşim Oranı: %${(i*0.7).toFixed(1)}`"
-              ></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="heatmap-legend">
-          <span>Düşük</span>
-          <div class="legend-bar"></div>
-          <span>Yüksek</span>
+        <div class="time-pills">
+          <button
+            v-for="range in [7, 30, 90] as const"
+            :key="`perf-${range}`"
+            :class="{ active: selectedPerfRange === range }"
+            @click="selectedPerfRange = range"
+          >
+            {{ range }}g
+          </button>
         </div>
       </div>
 
-      <div class="panel-card">
-        <h3 class="panel-title">🌐 Kitle dağılımı</h3>
-        <p class="panel-sub">İlk 5 şehir</p>
-
-        <div class="progress-list">
-          <div class="progress-item">
-            <div class="prog-info"><span>İstanbul</span><span>42%</span></div>
-            <div class="prog-bg"><div class="prog-fill pink" style="width: 42%"></div></div>
-          </div>
-          <div class="progress-item">
-            <div class="prog-info"><span>Ankara</span><span>18%</span></div>
-            <div class="prog-bg"><div class="prog-fill purple" style="width: 18%"></div></div>
-          </div>
-          <div class="progress-item">
-            <div class="prog-info"><span>İzmir</span><span>12%</span></div>
-            <div class="prog-bg"><div class="prog-fill cyan" style="width: 12%"></div></div>
-          </div>
-          <div class="progress-item">
-            <div class="prog-info"><span>Bursa</span><span>8%</span></div>
-            <div class="prog-bg"><div class="prog-fill orange" style="width: 8%"></div></div>
-          </div>
-          <div class="progress-item">
-            <div class="prog-info"><span>Antalya</span><span>6%</span></div>
-            <div class="prog-bg"><div class="prog-fill muted" style="width: 6%"></div></div>
-          </div>
-        </div>
+      <div v-if="!chartsLoading && filteredPerfPosts.length === 0" class="chart-empty-note">
+        <AppEmptyState
+          title="Etkileşim verisi yok"
+          description="Seçilen zaman aralığında analiz edilecek gönderi bulunamadı."
+        />
       </div>
+      <BarChart
+        v-else
+        :categories="contentPerf.map(c => c.label)"
+        :data="contentPerf.map(c => c.avgEngagement)"
+        :colors="['#ec4899', '#06b6d4', '#a855f7']"
+        :loading="chartsLoading"
+        height="220px"
+        :value-formatter="(v) => `%${v}`"
+      />
+    </div>
+
+    <!-- 4. EN İYİ PAYLAŞIM ZAMANI / ISI HARİTASI (BestTimesChart) -->
+    <div class="panel-card">
+      <BestTimesChart
+        :heatmap-data="bestTimes"
+        :loading="chartsLoading"
+        :error="bestTimesError"
+        @retry="fetchBestTimesData"
+      />
     </div>
 
     <!-- 5. SON GÖNDERİLER TABLOSU -->
@@ -289,55 +312,42 @@
           <h3 class="panel-title">Son gönderiler</h3>
           <p class="panel-sub">Etkileşime göre sıralandı</p>
         </div>
-        <button class="link-btn">Tümünü gör ↗</button>
+        <NuxtLink v-if="primaryAccountId" :to="`/accounts/${primaryAccountId}`" class="link-btn">Tümünü gör ↗</NuxtLink>
       </div>
 
-      <table class="custom-table">
-        <thead>
-          <tr>
-            <th>İçerik</th>
-            <th>Tip</th>
-            <th>Beğeni</th>
-            <th>Yorum</th>
-            <th>ER</th>
-            <th>Tarih</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr class="table-row">
-            <td class="content-cell"><span class="media-icon">🎬</span> Yaz kampanya özet — perde arkası</td>
-            <td><span class="type-badge reel">Reel</span></td>
-            <td>24.1K</td>
-            <td>412</td>
-            <td class="er-text">%8.9</td>
-            <td class="date-text">2s önce</td>
-          </tr>
-          <tr class="table-row">
-            <td class="content-cell"><span class="media-icon">🖼️</span> Yeni koleksiyon lansmanı</td>
-            <td><span class="type-badge foto">Foto</span></td>
-            <td>12.8K</td>
-            <td>287</td>
-            <td class="er-text">%6.1</td>
-            <td class="date-text">1g önce</td>
-          </tr>
-          <tr class="table-row">
-            <td class="content-cell"><span class="media-icon">🎴</span> Kullanıcı hikâyeleri #3</td>
-            <td><span class="type-badge carousel">Carousel</span></td>
-            <td>9.4K</td>
-            <td>198</td>
-            <td class="er-text">%5.4</td>
-            <td class="date-text">2g önce</td>
-          </tr>
-          <tr class="table-row">
-            <td class="content-cell"><span class="media-icon">🎬</span> Atölye günlüğü</td>
-            <td><span class="type-badge reel">Reel</span></td>
-            <td>18.7K</td>
-            <td>356</td>
-            <td class="er-text">%7.8</td>
-            <td class="date-text">3g önce</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="custom-table-wrapper">
+        <table class="custom-table">
+          <thead>
+            <tr>
+              <th>İçerik</th>
+              <th>Tip</th>
+              <th>Beğeni</th>
+              <th>Yorum</th>
+              <th>Etkileşim</th>
+              <th>Tarih</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="chartsLoading">
+              <td colspan="6" class="content-cell">Yükleniyor…</td>
+            </tr>
+            <tr v-else-if="recentPosts.length === 0">
+              <td colspan="6" class="content-cell">Henüz gönderi verisi yok.</td>
+            </tr>
+            <tr v-for="post in recentPosts" :key="post.id" class="table-row" v-else>
+              <td class="content-cell">
+                <span class="media-icon">{{ TYPE_ICON[post.type] }}</span>
+                {{ post.caption || 'Başlıksız gönderi' }}
+              </td>
+              <td><span :class="['type-badge', TYPE_CLASS[post.type]]">{{ TYPE_LABEL[post.type] }}</span></td>
+              <td>{{ formatCompact(post.metrics.likes) }}</td>
+              <td>{{ post.metrics.commentsCount }}</td>
+              <td class="er-text">%{{ post.metrics.engagementRate }}</td>
+              <td class="date-text">{{ formatRelative(post.postedAt) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
   </div>
@@ -350,42 +360,235 @@ definePageMeta({
   middleware: auth
 })
 
-
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useApi } from '~/composables/useApi'
-import type { Account } from '~/utils/mockData'
+import { deriveContentMix, deriveContentPerformance } from '~/utils/apiMappers'
+import type { Account, TimeSeriesPoint, ContentMixSlice, ContentTypePerformance, PostItem, BestTimeSlot, AccountOverview } from '~/utils/mockData'
 
 const api = useApi()
 const accounts = ref<Account[]>([])
 const loading = ref(true)
 
-const hoverPos = ref<{ x: number; date: string; value: string } | null>(null)
+const primaryAccountId = ref<string | number | null>(null)
+const overview = ref<AccountOverview | undefined>(undefined)
+const followerSeries = ref<TimeSeriesPoint[]>([])
+const recentPosts = ref<PostItem[]>([])
+const allPosts = ref<PostItem[]>([])
+const bestTimes = ref<BestTimeSlot[]>([])
+const bestTimesError = ref(false)
+const chartsLoading = ref(true)
+
+// FİLTRE STATE'LERİ (F3.4)
+const selectedGrowthRange = ref<7 | 30 | 90>(30)
+const selectedMixRange = ref<7 | 30 | 90>(30)
+const selectedPerfRange = ref<7 | 30 | 90>(30)
+
+const TYPE_ICON: Record<PostItem['type'], string> = { reel: '🎬', image: '🖼️', carousel: '🎴' }
+const TYPE_LABEL: Record<PostItem['type'], string> = { reel: 'Reel', image: 'Foto', carousel: 'Carousel' }
+const TYPE_CLASS: Record<PostItem['type'], string> = { reel: 'reel', image: 'foto', carousel: 'carousel' }
+
+const DAY_LABELS = ['Pt', 'Sa', 'Ça', 'Pe', 'Cu', 'Ct', 'Pz']
+const DAY_LABELS_FULL = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar']
+
+const todayLabel = computed(() =>
+  new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
+)
+
+function formatCompact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(Math.round(n))
+}
+
+function formatSignedCompact(n: number): string {
+  const sign = n >= 0 ? '+' : '-'
+  return `${sign}${formatCompact(Math.abs(n))}`
+}
+
+function formatSignedPercent(n: number): string {
+  const sign = n >= 0 ? '+' : ''
+  return `${sign}${n.toFixed(1)}%`
+}
+
+function formatRelative(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const hours = Math.floor(diffMs / 3_600_000)
+  if (hours < 1) return 'Az önce'
+  if (hours < 24) return `${hours}s önce`
+  return `${Math.floor(hours / 24)}g önce`
+}
+
+const peakSlotLabel = computed(() => {
+  const withData = bestTimes.value.filter(s => s.sampleSize > 0 && s.avgEngagement !== null)
+  if (!withData.length) return null
+  const top = [...withData].sort((a, b) => (b.avgEngagement ?? 0) - (a.avgEngagement ?? 0))[0]
+  const dayLabel = DAY_LABELS_FULL[top.dayOfWeek - 1] ?? 'Perşembe' // <-- DAY_LABELS yerine DAY_LABELS_FULL
+  return `${dayLabel} ${top.hour}:00`
+})
+
+// ===== FİLTREYE GÖRE DİNAMİK TÜRETİLEN GERÇEK İSTATİSTİKLER (F3.4) =====
+
+const last30DaysPosts = computed(() => {
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+  return allPosts.value.filter(p => new Date(p.postedAt).getTime() >= cutoff)
+})
+
+const filteredMixPosts = computed(() => {
+  const cutoff = Date.now() - selectedMixRange.value * 24 * 60 * 60 * 1000
+  return allPosts.value.filter(p => new Date(p.postedAt).getTime() >= cutoff)
+})
+
+const filteredPerfPosts = computed(() => {
+  const cutoff = Date.now() - selectedPerfRange.value * 24 * 60 * 60 * 1000
+  return allPosts.value.filter(p => new Date(p.postedAt).getTime() >= cutoff)
+})
+
+const contentMix = computed<ContentMixSlice[]>(() => deriveContentMix(filteredMixPosts.value))
+const contentPerf = computed<ContentTypePerformance[]>(() => deriveContentPerformance(filteredPerfPosts.value))
+
+const avgComments = computed(() => {
+  const list = last30DaysPosts.value
+  if (!list.length) return null
+  const total = list.reduce((sum, p) => sum + p.metrics.commentsCount, 0)
+  return Math.round(total / list.length)
+})
+
+const totalReach30d = computed(() => {
+  const list = last30DaysPosts.value
+  if (!list.length) return null
+  return list.reduce((sum, p) => sum + p.metrics.reach, 0)
+})
+
+const totalReachDisplay = computed(() =>
+  totalReach30d.value !== null ? formatCompact(totalReach30d.value) : '—'
+)
+
+const followersDisplay = computed(() =>
+  overview.value ? formatCompact(overview.value.followerGrowth.end) : '—'
+)
+
+const totalPostsDisplay = computed(() =>
+  overview.value ? overview.value.postFrequency.totalPosts : null
+)
+
+const newFollowersDisplay = computed(() =>
+  overview.value ? formatSignedCompact(overview.value.followerGrowth.absoluteChange) : '—'
+)
+
+const topPerformingLabel = computed(() => {
+  if (!contentPerf.value.length) return null
+  const top = [...contentPerf.value].sort((a, b) => b.avgEngagement - a.avgEngagement)[0]
+  return top?.label ?? null
+})
+
+const engagementSpark = computed(() =>
+  overview.value ? [{ date: '', value: overview.value.averageEngagementRate }, { date: '', value: overview.value.averageEngagementRate }] : []
+)
+const commentsSpark = computed(() =>
+  avgComments.value !== null ? [{ date: '', value: avgComments.value }, { date: '', value: avgComments.value }] : []
+)
+const reachSpark = computed(() =>
+  totalReach30d.value !== null ? [{ date: '', value: totalReach30d.value }, { date: '', value: totalReach30d.value }] : []
+)
+
+function sparkLine(points: TimeSeriesPoint[]): string {
+  if (!points.length) return ''
+  const values = points.map(p => p.value)
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const range = max - min || 1
+  const step = 100 / Math.max(1, points.length - 1)
+  return points
+    .map((p, i) => {
+      const x = i * step
+      const y = 36 - ((p.value - min) / range) * 32
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+}
+
+function sparkPath(points: TimeSeriesPoint[]): string {
+  const line = sparkLine(points)
+  if (!line) return ''
+  return `${line} L100,40 L0,40 Z`
+}
+
+async function changeGrowthRange(range: 7 | 30 | 90) {
+  selectedGrowthRange.value = range
+  if (!primaryAccountId.value) return
+  chartsLoading.value = true
+  try {
+    const [series, ov] = await Promise.all([
+      api.getFollowerTimeseries(primaryAccountId.value, range),
+      api.getAccountOverview(primaryAccountId.value, `${range}d`)
+    ])
+    followerSeries.value = series
+    overview.value = ov
+  } catch (err) {
+    console.error('Takipçi zaman serisi hatası:', err)
+  } finally {
+    chartsLoading.value = false
+  }
+}
+
+async function pickPrimaryAccountId(accountsList: Account[]): Promise<string | number | null> {
+  for (const acc of accountsList) {
+    try {
+      const posts = await api.getAccountPosts(acc.id, { limit: 1 })
+      if (posts.length > 0) return acc.id
+    } catch (err) {
+      console.error(`Hesap ${acc.id} için gönderi kontrolü başarısız:`, err)
+    }
+  }
+  return accountsList[0]?.id ?? null
+}
+
+async function fetchBestTimesData() {
+  if (!primaryAccountId.value) return
+  bestTimesError.value = false
+  try {
+    bestTimes.value = await api.getBestTimes(primaryAccountId.value)
+  } catch (err) {
+    console.error('Best times yükleme hatası:', err)
+    bestTimesError.value = true
+  }
+}
 
 onMounted(async () => {
   try {
     accounts.value = await api.getAccounts()
+    const accId = await pickPrimaryAccountId(accounts.value)
+    primaryAccountId.value = accId
+
+    if (accId === null) {
+      overview.value = undefined
+      followerSeries.value = []
+      recentPosts.value = []
+      allPosts.value = []
+      bestTimes.value = []
+      return
+    }
+
+    const [ov, series, topPosts, fullPosts, heatmap] = await Promise.all([
+      api.getAccountOverview(accId, `${selectedGrowthRange.value}d`),
+      api.getFollowerTimeseries(accId, selectedGrowthRange.value),
+      api.getAccountPosts(accId, { sort: 'engagement', limit: 4 }),
+      api.getAccountPosts(accId, { sort: 'date', limit: 50 }),
+      api.getBestTimes(accId).catch(() => { bestTimesError.value = true; return [] })
+    ])
+
+    overview.value = ov
+    followerSeries.value = series
+    recentPosts.value = topPosts.slice(0, 4)
+    allPosts.value = fullPosts
+    bestTimes.value = heatmap
+  } catch (err) {
+    console.error('Dashboard veri hatası:', err)
   } finally {
     loading.value = false
+    chartsLoading.value = false
   }
 })
-
-const handleChartHover = (event: MouseEvent) => {
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  const x = event.clientX - rect.left
-  const day = Math.floor((x / rect.width) * 30) + 1
-  hoverPos.value = {
-    x: Math.min(Math.max(x, 10), rect.width - 10),
-    date: `${day} Temmuz`,
-    value: `${(170 + day * 0.47).toFixed(1)}K`
-  }
-}
-
-const getHeatClass = (day: string, idx: number) => {
-  if (day === 'Pe' && idx >= 8 && idx <= 11) return 'level-high'
-  if ((day === 'Pt' || day === 'Sa') && idx >= 4 && idx <= 7) return 'level-mid'
-  if (idx % 3 === 0) return 'level-low'
-  return 'level-none'
-}
 </script>
 
 <style scoped>
@@ -402,9 +605,10 @@ const getHeatClass = (day: string, idx: number) => {
 
 .pulse-anim { animation: softPulse 3s infinite ease-in-out; }
 
+.chart-empty-note { padding: 24px 0; }
+.skeleton-inline { opacity: 0.4; }
+
 /* Hero */
-/* Hero Ana Kart - İdeal Ara Büyüklük (Orta Boy) */
-/* Hero Ana Kart - Görseldeki Gibi Yumuşak & Premium Koyu Mod */
 .hero-card {
   background: 
     radial-gradient(circle at 92% 8%, rgba(193, 53, 132, 0.28) 0%, rgba(131, 58, 180, 0.14) 40%, transparent 70%),
@@ -418,7 +622,6 @@ const getHeatClass = (day: string, idx: number) => {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
 }
 
-/* "Haftalık özet" Rozeti */
 .hero-badge {
   display: inline-flex;
   align-items: center;
@@ -433,7 +636,6 @@ const getHeatClass = (day: string, idx: number) => {
   margin-bottom: 14px;
 }
 
-/* Başlık */
 .hero-title {
   font-size: 2.4rem; 
   font-weight: 400;
@@ -449,7 +651,6 @@ const getHeatClass = (day: string, idx: number) => {
   font-weight: 700;
 }
 
-/* Açıklama Metni */
 .hero-desc {
   color: #94a3b8;
   font-size: 0.95rem;
@@ -467,7 +668,6 @@ const getHeatClass = (day: string, idx: number) => {
   font-weight: 700;
 }
 
-/* Alt Kısım Hizalaması */
 .hero-footer {
   display: flex;
   justify-content: space-between;
@@ -477,7 +677,6 @@ const getHeatClass = (day: string, idx: number) => {
   gap: 16px;
 }
 
-/* Alt Haplar / Pill Yapıları (Koyu & Yumuşak) */
 .pill-group {
   display: flex;
   gap: 10px;
@@ -510,7 +709,6 @@ const getHeatClass = (day: string, idx: number) => {
   border-color: rgba(217, 119, 6, 0.22);
 }
 
-/* Sağ Alt Butonlar */
 .hero-actions {
   display: flex;
   gap: 10px;
@@ -518,7 +716,6 @@ const getHeatClass = (day: string, idx: number) => {
   margin-left: auto;
 }
 
-/* "Rapor indir" Koyu Oval Buton */
 .btn-dark {
   background: #090a0f;
   color: #ffffff;
@@ -535,7 +732,6 @@ const getHeatClass = (day: string, idx: number) => {
   background: #161822;
 }
 
-/* "+ Hesap ekle" Gradient Butonu */
 .btn-primary-grad {
   background: linear-gradient(90deg, #f43f5e 0%, #fb923c 100%);
   color: #ffffff;
@@ -559,10 +755,10 @@ const getHeatClass = (day: string, idx: number) => {
     radial-gradient(circle at 90% 10%, rgba(244, 63, 94, 0.22) 0%, rgba(251, 146, 60, 0.18) 35%, transparent 65%),
     radial-gradient(circle at 10% 90%, rgba(56, 189, 248, 0.18) 0%, transparent 55%),
     linear-gradient(180deg, #ffffff 0%, #fdf8fa 100%);
-  border: 1.5px solid rgba(225, 29, 72, 0.45); /* Kenarlık belirgin koyu fuşya/pembe yapıldı */
+  border: 1.5px solid rgba(225, 29, 72, 0.45);
   border-radius: 22px;
   padding: 28px 32px;
-  box-shadow: 0 10px 30px rgba(225, 29, 72, 0.12), 0 2px 8px rgba(0, 0, 0, 0.05); /* Dış hatları vurgulayan daha koyu gölge */
+  box-shadow: 0 10px 30px rgba(225, 29, 72, 0.12), 0 2px 8px rgba(0, 0, 0, 0.05);
   position: relative;
   overflow: hidden;
 }
@@ -574,7 +770,7 @@ const getHeatClass = (day: string, idx: number) => {
 }
 
 [data-theme="light"] .hero-title {
-  color: #18181b; /* Koyu net okunabilir metin */
+  color: #18181b;
 }
 
 [data-theme="light"] .hero-desc {
@@ -585,7 +781,6 @@ const getHeatClass = (day: string, idx: number) => {
   color: #18181b;
 }
 
-/* 2. Aydınlık Mod Buton Yapıları */
 [data-theme="light"] .btn-dark {
   background: #ffffff;
   color: #18181b;
@@ -598,7 +793,6 @@ const getHeatClass = (day: string, idx: number) => {
   border-color: #d4d4d8;
 }
 
-/* 3. Aydınlık Mod Haplar (Pills) */
 [data-theme="light"] .pill.green {
   background: rgba(16, 185, 129, 0.12);
   color: #059669;
@@ -616,7 +810,6 @@ const getHeatClass = (day: string, idx: number) => {
   color: #b45309;
   border-color: rgba(245, 158, 11, 0.2);
 }
-
 
 /* KPI Kartları */
 .kpi-grid {
@@ -720,6 +913,7 @@ const getHeatClass = (day: string, idx: number) => {
 .panel-card {
   background: var(--surface);
   border: 1px solid var(--border);
+  border-radius: var(--radius-card, 16px);
   padding: 22px;
   position: relative;
 }
@@ -759,13 +953,6 @@ const getHeatClass = (day: string, idx: number) => {
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
 
-.chart-area {
-  position: relative;
-  cursor: crosshair;
-}
-
-.main-chart { width: 100%; height: 220px; }
-
 .chart-footer-stats {
   display: flex;
   gap: 28px;
@@ -788,8 +975,6 @@ const getHeatClass = (day: string, idx: number) => {
   margin: 24px auto;
 }
 
-.donut-chart { transform: rotate(-90deg); }
-
 .donut-center {
   position: absolute;
   top: 50%; left: 50%;
@@ -800,23 +985,20 @@ const getHeatClass = (day: string, idx: number) => {
 .center-num { font-size: 1.6rem; display: block; line-height: 1; color: var(--foreground); }
 .center-lbl { font-size: 0.65rem; color: var(--muted-foreground); font-weight: 700; }
 
-/* Donut Altı Açıklama Listesi - Alanı Aşağı İttik */
 .legend-list { 
   display: flex; 
   flex-direction: column; 
-  gap: 12px; /* Elemanlar arası dikey boşluğu artırdık */
-  margin-top: 18px; /* Listeyi donut grafiğinden daha aşağı kaydırdık */
+  gap: 12px;
+  margin-top: 18px;
 }
 
-/* Açıklama Satırları - Font Büyütüldü */
 .legend-item { 
   display: flex; 
   align-items: center; 
-  font-size: 0.95rem; /* 0.88rem olan font boyutunu belirginleştirdik */
+  font-size: 0.95rem;
   color: var(--muted-foreground); 
 }
 
-/* Renkli Nokta İkonları */
 .legend-item .dot { 
   width: 10px; 
   height: 10px; 
@@ -824,142 +1006,20 @@ const getHeatClass = (day: string, idx: number) => {
   margin-right: 12px; 
 }
 
-/* Sağda Yazan Değer Sayıları */
 .legend-item .val { 
   margin-left: auto; 
   font-weight: 700; 
-  font-size: 0.98rem; /* Sayıları da metinle orantılı büyüttük */
+  font-size: 0.98rem; 
   color: var(--foreground); 
 }
-.dot.pink { background: var(--brand); }
-.dot.purple { background: var(--violet); }
-.dot.cyan { background: var(--cyan); }
-
-/* Heatmap */
-/* Heatmap Ana Alanı */
-.heatmap-grid { 
-  display: flex; 
-  flex-direction: column; 
-  gap: 12px; 
-  margin-top: 18px; 
-  width: 100%; /* Kartı tam kaplamasını sağlar */
-}
-
-.heatmap-row { 
-  display: flex; 
-  align-items: center; 
-  gap: 14px; 
-  width: 100%;
-}
-
-.day-lbl { 
-  font-size: 0.85rem; 
-  color: var(--muted-foreground); 
-  width: 32px; /* Gün etiket alanı */
-  font-weight: 600;
-  flex-shrink: 0; /* Etiketin büzülmesini engeller */
-}
-
-/* KUTUCUKLARIN BULUNDUĞU ALAN (Tüm Genişliği Kaplar) */
-.heat-cells { 
-  display: flex; 
-  gap: 10px; 
-  flex: 1; /* Sağdaki tüm boşluğu doldurur */
-  width: 100%;
-}
-
-/* BÜYÜK KUTUCUKLAR (Yükseklik 48px, Tam Esnek Genişlik) */
-.heat-cell { 
-  height: 48px; /* Kutucuklar dikeyde belirgin şekilde büyütüldü */
-  flex: 1; /* Her bir kutucuk eşit şekilde genişleyerek alanı tam kaplar */
-  min-width: 0; /* Taşamayı önler */
-  border-radius: 10px; /* Yumuşak büyük köşeler */
-  background: rgba(0, 0, 0, 0.03); 
-  transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease; 
-  cursor: pointer; 
-}
-
-.heat-cell:hover { 
-  transform: scale(1.12); 
-  z-index: 5; 
-  filter: brightness(1.25); 
-}
-
-/* Renk Seviyeleri */
-.heat-cell.level-none { 
-  background: rgba(255, 255, 255, 0.03); 
-}
-
-.heat-cell.level-low { 
-  background: rgba(236, 72, 153, 0.22); 
-}
-
-.heat-cell.level-mid { 
-  background: rgba(236, 72, 153, 0.55); 
-}
-
-.heat-cell.level-high { 
-  background: var(--brand, #ec4899); 
-  box-shadow: 0 0 16px rgba(236, 72, 153, 0.6); 
-}
-
-/* Alt Lejant Alanı */
-.heatmap-legend { 
-  display: flex; 
-  align-items: center; 
-  justify-content: flex-end; 
-  gap: 12px; 
-  font-size: 0.8rem; 
-  color: var(--muted-foreground); 
-  margin-top: 20px; 
-}
-
-.legend-bar { 
-  width: 110px; 
-  height: 8px; 
-  border-radius: 99px; 
-  background: linear-gradient(90deg, rgba(255,255,255,0.05), var(--brand, #ec4899)); 
-}
-
-
-/* Progress List */
-.progress-list { 
-  display: flex; 
-  flex-direction: column; 
-  gap: 18px; 
-  margin-top: 20px; 
-}
-
-.prog-info { 
-  display: flex; 
-  justify-content: space-between; 
-  font-size: 0.9rem; /* Font büyütüldü */
-  font-weight: 600; 
-  margin-bottom: 6px; 
-  color: var(--foreground); 
-}
-
-/* Barların Kalınlığı 6px -> 8px Yapıldı */
-.prog-bg { 
-  height: 8px; 
-  background: var(--background); 
-  border-radius: 99px; 
-  overflow: hidden; 
-}
-
-.prog-fill { 
-  height: 100%; 
-  border-radius: 99px; 
-}
-
-.prog-fill.pink { background: var(--brand, #ec4899); }
-.prog-fill.purple { background: var(--violet, #a855f7); }
-.prog-fill.cyan { background: var(--cyan, #06b6d4); }
-.prog-fill.orange { background: var(--brand-2, #f97316); }
-.prog-fill.muted { background: var(--muted-foreground); }
-
 
 /* Table */
+.custom-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .custom-table { 
   width: 100%; 
   border-collapse: collapse; 
@@ -968,20 +1028,22 @@ const getHeatClass = (day: string, idx: number) => {
 
 .custom-table th { 
   text-align: left; 
-  font-size: 0.8rem; /* Başlıklar büyütüldü */
+  font-size: 0.8rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted-foreground); 
   padding: 12px 14px; 
   border-bottom: 1px solid var(--border); 
+  white-space: nowrap;
 }
 
 .custom-table td { 
-  padding: 16px 14px; /* Hücre boşlukları ferahlatıldı */
-  font-size: 0.95rem; /* Satır metinleri büyütüldü */
+  padding: 16px 14px;
+  font-size: 0.95rem;
   border-bottom: 1px solid var(--border); 
   color: var(--foreground); 
+  white-space: nowrap;
 }
 
 .table-row:hover { 
@@ -990,6 +1052,8 @@ const getHeatClass = (day: string, idx: number) => {
 
 .content-cell { 
   font-weight: 600; 
+  white-space: normal;
+  min-width: 220px;
 }
 
 .type-badge { 
@@ -1031,6 +1095,7 @@ const getHeatClass = (day: string, idx: number) => {
   font-size: 0.9rem; 
   cursor: pointer; 
   transition: opacity 0.2s;
+  text-decoration: none;
 }
 
 .link-btn:hover {

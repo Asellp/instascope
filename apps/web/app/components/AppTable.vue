@@ -13,12 +13,14 @@
   </div>
 </template>
 
+<script setup lang="ts"></script>
+
 <style scoped>
 .table-wrapper {
   width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  border-radius: 16px;
 }
 
 .app-table {
@@ -29,17 +31,17 @@
 }
 
 :deep(th) {
-  background-color: var(--bg-card);
-  color: var(--text-muted);
+  background-color: var(--surface);
+  color: var(--muted-foreground);
   font-weight: 600;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border);
 }
 
 :deep(td) {
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
-  color: var(--text-main);
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground);
 }
 
 :deep(tr:last-child td) {
@@ -47,6 +49,6 @@
 }
 
 :deep(tr:hover td) {
-  background-color: var(--bg-card-hover);
+  background-color: var(--surface-hover);
 }
 </style>

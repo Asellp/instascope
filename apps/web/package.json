@@ -10,7 +10,9 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
+    "@instascope/shared": "workspace:*",
     "@pinia/nuxt": "^1.0.1",
+    "echarts": "^6.1.0",
     "nuxt": "^4.5.0",
     "pinia": "^4.0.2",
     "vue": "^3.5.40",

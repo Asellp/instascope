@@ -1,3 +1,4 @@
+<!-- apps/web/app/pages/reset-password.vue -->
 <template>
   <div class="auth-layout">
     <div class="ambient-glow glow-1"></div>
@@ -15,185 +16,137 @@
       <div class="auth-header">
         <div class="logo-box">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
-            <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
-            <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
         </div>
         <h1 class="auth-title font-serif-display">InstaScope</h1>
-        <p class="auth-sub">Hesabınızı oluşturun ve analizlere hemen başlayın</p>
+        <p class="auth-sub">Hesabınız için lütfen güçlü bir yeni şifre girin.</p>
       </div>
 
       <transition name="fade">
-        <div v-if="displayError" class="error-banner">
-          ⚠️ {{ displayError }}
+        <div v-if="!token" class="error-banner">
+          ⚠️ Geçersiz veya süresi dolmuş sıfırlama bağlantısı.
         </div>
       </transition>
 
-      <form @submit.prevent="handleRegister" class="auth-form">
-        <div class="form-group">
-          <label>AD SOYAD</label>
-          <div class="input-wrapper">
-            <span class="input-icon">👤</span>
-            <input v-model="name" type="text" placeholder="Nazgül Aksoy" required />
-          </div>
+      <transition name="fade">
+        <div v-if="successMessage" class="alert-banner success">
+          ✅ {{ successMessage }}
+          <NuxtLink to="/login" class="submit-btn success-link">
+            Giriş Yap
+          </NuxtLink>
         </div>
+      </transition>
 
-        <div class="form-group">
-          <label>E-POSTA ADRESİ</label>
-          <div class="input-wrapper">
-            <span class="input-icon">✉️</span>
-            <input v-model="email" type="email" placeholder="ornek@instascope.io" required />
-          </div>
+      <transition name="fade">
+        <div v-if="errorMessage" class="error-banner">
+          ⚠️ {{ errorMessage }}
         </div>
+      </transition>
 
+      <form v-if="token && !successMessage" class="auth-form" @submit.prevent="handleResetPassword">
         <div class="form-group">
-          <label>ŞİFRE</label>
+          <label>YENİ ŞİFRE</label>
           <div class="input-wrapper">
             <span class="input-icon">🔒</span>
             <input
-              v-model="password"
-              :type="showPassword ? 'text' : 'password'"
+              v-model="newPassword"
+              :type="showNewPassword ? 'text' : 'password'"
               placeholder="••••••••"
               required
+              minlength="6"
             />
             <button
               type="button"
               class="toggle-visibility-btn"
-              @click="showPassword = !showPassword"
-              :aria-label="showPassword ? 'Şifreyi gizle' : 'Şifreyi göster'"
+              @click="showNewPassword = !showNewPassword"
+              :aria-label="showNewPassword ? 'Şifreyi gizle' : 'Şifreyi göster'"
               tabindex="-1"
             >
-              {{ showPassword ? '🙈' : '👁️' }}
+              {{ showNewPassword ? '🙈' : '👁️' }}
             </button>
           </div>
         </div>
 
-        <div class="terms-group">
-          <label class="checkbox-label">
-            <input type="checkbox" v-model="acceptTerms" />
-            <span>
-              <a href="#" class="terms-link">Kullanım Koşulları</a> ve
-              <a href="#" class="terms-link">Gizlilik Politikası</a>'nı kabul ediyorum.
-            </span>
-          </label>
+        <div class="form-group">
+          <label>YENİ ŞİFRE (TEKRAR)</label>
+          <div class="input-wrapper">
+            <span class="input-icon">🔒</span>
+            <input
+              v-model="confirmPassword"
+              :type="showConfirmPassword ? 'text' : 'password'"
+              placeholder="••••••••"
+              required
+              minlength="6"
+            />
+            <button
+              type="button"
+              class="toggle-visibility-btn"
+              @click="showConfirmPassword = !showConfirmPassword"
+              :aria-label="showConfirmPassword ? 'Şifreyi gizle' : 'Şifreyi göster'"
+              tabindex="-1"
+            >
+              {{ showConfirmPassword ? '🙈' : '👁️' }}
+            </button>
+          </div>
         </div>
 
-        <button type="submit" class="submit-btn" :disabled="isLoading || retryCountdown > 0">
-          <span v-if="isLoading" class="spinner"></span>
-          <span>
-            {{
-              retryCountdown > 0
-                ? `${retryCountdown} saniye sonra tekrar deneyin`
-                : (isLoading ? 'Hesap Oluşturuluyor...' : 'Aramıza Katıl →')
-            }}
-          </span>
+        <button type="submit" class="submit-btn" :disabled="loading">
+          <span v-if="loading" class="spinner"></span>
+          <span>{{ loading ? 'Güncelleniyor...' : 'Şifremi Sıfırla' }}</span>
         </button>
       </form>
 
-      <div class="auth-footer">
-        Zaten bir hesabınız var mı?
-        <NuxtLink to="/login" class="auth-link">Giriş Yap</NuxtLink>
+      <div v-if="!successMessage" class="auth-footer">
+        <NuxtLink to="/login" class="auth-link">← Giriş Sayfasına Dön</NuxtLink>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '~/stores/auth'
+import { ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { useApi } from '~/composables/useApi'
 import { useTheme } from '~/composables/useTheme'
 
-definePageMeta({ layout: false })
-
-const name = ref('')
-const email = ref('')
-const password = ref('')
-const showPassword = ref(false)
-const acceptTerms = ref(false)
-const isLoading = ref(false)
-const errorMessage = ref('')
-const retryCountdown = ref(0)
-
-const api = useApi()
-const authStore = useAuthStore()
-const router = useRouter()
-const { isDark, toggleTheme } = useTheme('dark')
-
-let countdownTimer: ReturnType<typeof setInterval> | null = null
-
-function clearCountdownTimer() {
-  if (countdownTimer) {
-    clearInterval(countdownTimer)
-    countdownTimer = null
-  }
-}
-
-function startRetryCountdown(seconds: number) {
-  clearCountdownTimer()
-  retryCountdown.value = Math.max(1, Math.ceil(seconds))
-  countdownTimer = setInterval(() => {
-    retryCountdown.value -= 1
-    if (retryCountdown.value <= 0) {
-      clearCountdownTimer()
-      errorMessage.value = ''
-    }
-  }, 1000)
-}
-
-function extractRetryAfterSeconds(err: any): number | null {
-  const bodyValue = err?.data?.retryAfterSeconds ?? err?.response?._data?.retryAfterSeconds
-  if (typeof bodyValue === 'number') return bodyValue
-
-  const headerValue = err?.response?.headers?.get?.('retry-after')
-  if (headerValue) {
-    const parsed = Number(headerValue)
-    if (!Number.isNaN(parsed)) return parsed
-  }
-  return null
-}
-
-const displayError = computed(() => {
-  if (retryCountdown.value > 0) {
-    return `Çok fazla deneme yaptınız. Lütfen ${retryCountdown.value} saniye sonra tekrar deneyin.`
-  }
-  return errorMessage.value
+definePageMeta({
+  layout: false
 })
 
-onUnmounted(() => clearCountdownTimer())
+const route = useRoute()
+const api = useApi()
+const { isDark, toggleTheme } = useTheme('dark')
 
-const handleRegister = async () => {
-  if (retryCountdown.value > 0) return
+// URL'deki ?token=... parametresini alır
+const token = computed(() => String(route.query.token || ''))
 
-  if (!name.value || !email.value || !password.value) {
-    errorMessage.value = 'Lütfen tüm alanları doldurun.'
+const newPassword = ref('')
+const confirmPassword = ref('')
+const showNewPassword = ref(false)
+const showConfirmPassword = ref(false)
+const loading = ref(false)
+const successMessage = ref('')
+const errorMessage = ref('')
+
+async function handleResetPassword() {
+  if (newPassword.value !== confirmPassword.value) {
+    errorMessage.value = 'Şifreler birbiriyle eşleşmiyor!'
     return
   }
 
-  if (!acceptTerms.value) {
-    errorMessage.value = 'Lütfen kullanım koşullarını kabul edin.'
-    return
-  }
-
-  isLoading.value = true
+  loading.value = true
   errorMessage.value = ''
+  successMessage.value = ''
 
   try {
-    const res = await api.register(name.value, email.value, password.value)
-    authStore.setUser(res.user)
-    router.push('/')
+    const res = await api.resetPassword(token.value, newPassword.value)
+    successMessage.value = res.message || 'Şifreniz başarıyla güncellendi.'
   } catch (err: any) {
-    const status = err?.response?.status ?? err?.statusCode
-    if (status === 429) {
-      const retryAfter = extractRetryAfterSeconds(err) ?? 60
-      startRetryCountdown(retryAfter)
-    } else {
-      errorMessage.value = err instanceof Error ? err.message : 'Kayıt olunurken bir hata oluştu.'
-    }
+    errorMessage.value = err?.data?.message || err?.message || 'Şifre güncellenemedi veya bağlantı süresi doldu.'
   } finally {
-    isLoading.value = false
+    loading.value = false
   }
 }
 </script>
@@ -246,16 +199,16 @@ const handleRegister = async () => {
   pointer-events: none;
   transition: opacity 0.3s ease, background 0.3s ease;
 }
-.glow-1 { top: -120px; right: -100px; background: rgba(168, 85, 247, 0.7); }
+.glow-1 { top: -120px; right: -100px; background: rgba(34, 197, 94, 0.6); }
 .glow-2 { bottom: -120px; left: -100px; background: rgba(14, 165, 233, 0.5); }
 
 .hero-style-card {
   width: 100%;
   max-width: 420px;
-  background: radial-gradient(circle at 92% 8%, rgba(168, 85, 247, 0.25) 0%, rgba(131, 58, 180, 0.14) 40%, transparent 70%),
-              radial-gradient(circle at 8% 92%, rgba(14, 165, 233, 0.12) 0%, transparent 55%),
+  background: radial-gradient(circle at 92% 8%, rgba(34, 197, 94, 0.2) 0%, rgba(131, 58, 180, 0.1) 40%, transparent 70%),
+              radial-gradient(circle at 8% 92%, rgba(14, 165, 233, 0.1) 0%, transparent 55%),
               linear-gradient(180deg, #11131a 0%, #0a0c12 100%);
-  border: 1px solid rgba(168, 85, 247, 0.25);
+  border: 1px solid rgba(34, 197, 94, 0.22);
   border-radius: var(--radius-card, 22px);
   padding: 36px 32px;
   backdrop-filter: blur(20px);
@@ -294,6 +247,24 @@ const handleRegister = async () => {
   text-align: center;
 }
 
+.alert-banner.success {
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  color: #4ade80;
+  padding: 14px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  margin-bottom: 20px;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.success-link {
+  display: block;
+  margin-top: 14px;
+  text-decoration: none;
+}
+
 .auth-form { display: flex; flex-direction: column; gap: 16px; }
 
 .form-group { display: flex; flex-direction: column; gap: 6px; }
@@ -330,29 +301,9 @@ const handleRegister = async () => {
 }
 
 .form-group input:focus {
-  border-color: #a855f7;
-  box-shadow: 0 0 12px rgba(168, 85, 247, 0.3);
+  border-color: #22c55e;
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.3);
 }
-
-.terms-group { margin-top: 2px; }
-
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.76rem;
-  color: #94a3b8;
-  cursor: pointer;
-}
-
-.checkbox-label input {
-  accent-color: #ec4899;
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-}
-
-.terms-link { color: #ec4899; font-weight: 600; text-decoration: underline; }
 
 .submit-btn {
   width: 100%;
@@ -391,14 +342,14 @@ const handleRegister = async () => {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.auth-footer { margin-top: 24px; text-align: center; font-size: 0.82rem; color: #94a3b8; }
-.auth-link { color: #ec4899; font-weight: 700; text-decoration: none; margin-left: 4px; }
+.auth-footer { margin-top: 24px; text-align: center; font-size: 0.82rem; }
+.auth-link { color: #ec4899; font-weight: 700; text-decoration: none; }
 .auth-link:hover { text-decoration: underline; color: #f43f5e; }
 
 [data-theme="light"] .auth-layout {
   background:
-    radial-gradient(circle at 85% 15%, rgba(244, 63, 94, 0.18) 0%, rgba(251, 146, 60, 0.12) 35%, transparent 65%),
-    radial-gradient(circle at 15% 85%, rgba(2, 132, 199, 0.22) 0%, transparent 60%),
+    radial-gradient(circle at 85% 15%, rgba(34, 197, 94, 0.14) 0%, rgba(251, 146, 60, 0.1) 35%, transparent 65%),
+    radial-gradient(circle at 15% 85%, rgba(2, 132, 199, 0.18) 0%, transparent 60%),
     #f1f5f9;
 }
 
@@ -409,22 +360,16 @@ const handleRegister = async () => {
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
 }
 
-[data-theme="light"] .glow-2 {
-  background: rgba(2, 132, 199, 0.5) !important;
-}
-
 [data-theme="light"] .hero-style-card {
-  background: radial-gradient(circle at 90% 10%, rgba(244, 63, 94, 0.15) 0%, rgba(251, 146, 60, 0.1) 35%, transparent 65%),
-              radial-gradient(circle at 10% 90%, rgba(2, 132, 199, 0.15) 0%, transparent 60%),
+  background: radial-gradient(circle at 90% 10%, rgba(34, 197, 94, 0.1) 0%, rgba(251, 146, 60, 0.08) 35%, transparent 65%),
+              radial-gradient(circle at 10% 90%, rgba(2, 132, 199, 0.12) 0%, transparent 60%),
               linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   border: 2px solid rgba(15, 23, 42, 0.22);
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 [data-theme="light"] .auth-title { color: #0f172a; }
-[data-theme="light"] .auth-sub,
-[data-theme="light"] .auth-footer,
-[data-theme="light"] .checkbox-label { color: #334155; }
+[data-theme="light"] .auth-sub { color: #334155; }
 [data-theme="light"] .form-group label { color: #0f172a; }
 
 [data-theme="light"] .form-group input {
@@ -436,9 +381,10 @@ const handleRegister = async () => {
 [data-theme="light"] .form-group input::placeholder { color: #64748b; }
 
 [data-theme="light"] .form-group input:focus {
-  border-color: #0284c7;
-  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.2);
+  border-color: #16a34a;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2);
 }
 
-[data-theme="light"] .terms-link { color: #0284c7; }
+[data-theme="light"] .auth-link { color: #0284c7; }
+[data-theme="light"] .auth-link:hover { color: #0369a1; }
 </style>
