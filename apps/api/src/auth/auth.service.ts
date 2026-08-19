@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CacheService } from '../cache/cache.service'; // <--- CacheService eklendi
 import * as jwt from 'jsonwebtoken';
 import { argon2Verify, argon2id } from 'hash-wasm';
+import { MailService } from '../mail/mail.service'; 
 
 @Injectable()
 export class AuthService {
@@ -24,7 +25,8 @@ export class AuthService {
 
   constructor(
     private prisma: PrismaService,
-    private cacheService: CacheService, // <--- Burada enjekte ediliyor
+    private cacheService: CacheService,
+    private mailService: MailService,
   ) {}
 
   async register(name: string, email: string, password: string) {
@@ -195,5 +197,69 @@ export class AuthService {
     });
 
     return { accessToken, refreshToken: rawRefreshToken };
+  }
+
+  async forgotPassword(email: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    
+    if (!user) {
+      return { message: 'Eğer kayıtlı bir hesap varsa şifre sıfırlama bağlantısı gönderildi.' };
+    }
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 1);
+
+    await this.prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
+    await this.prisma.passwordResetToken.create({
+      data: { userId: user.id, tokenHash, expiresAt },
+    });
+
+    // --- İŞTE BU SATIRIN OLDUĞUNDAN EMİN OL ---
+    await this.mailService.sendPasswordResetEmail(user.email, rawToken);
+
+    return { message: 'Eğer kayıtlı bir hesap varsa şifre sıfırlama bağlantısı gönderildi.' };
+  }
+
+  async resetPassword(token: string, newPassword: string) {
+    const tokenHash = this.hashToken(token);
+
+    const resetRecord = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+    });
+
+    if (!resetRecord || new Date() > resetRecord.expiresAt) {
+      throw new UnauthorizedException('Geçersiz veya süresi dolmuş sıfırlama tokenı.');
+    }
+
+    const newPasswordHash = await argon2id({
+      password: newPassword,
+      salt: crypto.randomBytes(16),
+      parallelism: 1,
+      iterations: 3,
+      memorySize: 19456,
+      hashLength: 32,
+      outputType: 'encoded',
+    });
+
+    // Kullanıcının şifresini güncelle
+    await this.prisma.user.update({
+      where: { id: resetRecord.userId },
+      data: { passwordHash: newPasswordHash },
+    });
+
+    // Kullanılan token'ı sil
+    await this.prisma.passwordResetToken.delete({
+      where: { id: resetRecord.id },
+    });
+
+    // Güvenlik için şifresi değişen kullanıcının tüm aktif oturumlarını (refresh token'larını) kapatıyoruz
+    await this.prisma.refreshToken.deleteMany({
+      where: { userId: resetRecord.userId },
+    });
+
+    return { message: 'Şifreniz başarıyla güncellendi.' };
   }
 }

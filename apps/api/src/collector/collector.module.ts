@@ -37,7 +37,7 @@ import { TokenEncryptionModule } from 'src/common/encryption/token-encryption.mo
     RealDataSourceService,
     ScrapeDataSourceService,
     MockDataSourceService,
-    AiDataSourceService, // <--- Providers arasına dahil edildi
+    AiDataSourceService,
   ],
 })
 export class CollectorModule implements OnModuleInit {

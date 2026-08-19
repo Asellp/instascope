@@ -14,6 +14,7 @@ import {
   SentimentLabel,
 } from './interfaces/post-sentiment.interface';
 import { HashtagAnalysis } from './interfaces/hashtag-analysis.interface';
+import { AuditService } from 'src/common/audit/audit.service';
 
 const RANGE_TO_DAYS: Record<OverviewRange, number> = {
   '7d': 7,
@@ -34,6 +35,7 @@ export class AccountsService {
     @InjectQueue('collect') private readonly collectQueue: Queue,
     private readonly cacheService: CacheService,
     private readonly tokenEncryption: TokenEncryptionService,
+    private readonly auditService: AuditService,
   ) {}
 
   async create(dto: CreateAccountDto, userId: string) {
@@ -70,7 +72,7 @@ export class AccountsService {
         igUsername: dto.username,
         sourceType: dto.sourceType,
         igAccountId: fetchedIgAccountId,
-        scheduleCron: dto.frequency === 'daily' ? '0 0 * * *' : '*/5 * * * *',
+        scheduleCron: dto.frequency === 'daily' ? '0 0 * * *' : '0 */6 * * *',
         status: 'active',
         accessTokenEnc: dto.accessTokenEnc
           ? this.tokenEncryption.encrypt(dto.accessTokenEnc)
@@ -83,11 +85,27 @@ export class AccountsService {
       { accountId: account.id, igUsername: account.igUsername },
       {
         repeat: {
-          pattern: account.scheduleCron || '*/5 * * * *',
+          pattern: account.scheduleCron || '0 */6 * * *', // 6 saatte bir
         },
         jobId: `collect-${account.id}`,
       },
     );
+    // 2. YENİ: Haftalık derin tarama işi (Örn: Pazar günleri saat 03:00'te deep: true bayrağıyla tetiklenir)
+    await this.collectQueue.add(
+      'collect-account-job',
+      { accountId: account.id, igUsername: account.igUsername, deep: true },
+      {
+        repeat: {
+          pattern: '0 3 * * 0', // Haftada bir, Pazar 03:00
+        },
+        jobId: `collect-deep-${account.id}`,
+      },
+    );
+    await this.auditService.log({
+      userId: userId,
+      action: 'CREATE_ACCOUNT',
+      resource: `account:${account.id}`,
+    });
 
     return account;
   }
@@ -190,18 +208,36 @@ export class AccountsService {
 
     try {
       const repeatableJobs = await this.collectQueue.getRepeatableJobs();
-      const jobToRemove = repeatableJobs.find(
+      
+      // 1. Standart periyodik işi bul ve sil
+      const standardJob = repeatableJobs.find(
         (job) => job.id === `collect-${id}`,
       );
-      if (jobToRemove) {
-        await this.collectQueue.removeRepeatableByKey(jobToRemove.key);
+      if (standardJob) {
+        await this.collectQueue.removeRepeatableByKey(standardJob.key);
+      }
+
+      // 2. YENİ: Haftalık derin tarama işini bul ve sil
+      const deepJob = repeatableJobs.find(
+        (job) => job.id === `collect-deep-${id}`,
+      );
+      if (deepJob) {
+        await this.collectQueue.removeRepeatableByKey(deepJob.key);
       }
     } catch (e) {
       console.warn(`Repeatable job silinemedi (accountId: ${id}):`, e);
     }
 
     try {
-      return await this.prisma.trackedAccount.delete({ where: { id } });
+      const deletedAccount = await this.prisma.trackedAccount.delete({ where: { id } });
+
+      // BURAYA EKLEMELİYİZ: Hesap silindiğinde audit log atılması
+      await this.auditService.log({
+        userId: userId,
+        action: 'DELETE_ACCOUNT',
+        resource: `account:${id}`,
+      });
+      return deletedAccount;
     } catch (e) {
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
@@ -380,6 +416,33 @@ export class AccountsService {
       };
     });
   }
+  // AI Tarafından İstenen Yeni Metot: getSentimentReasons
+  async getSentimentReasons(accountId: string, userId: string, userRole: Role) {
+    await this.findOne(accountId, userId, userRole);
+
+    const posts = await this.prisma.post.findMany({
+      where: { accountId },
+      select: { id: true, caption: true },
+    });
+    const postIds = posts.map(p => p.id);
+
+    const results = await this.prisma.analysisResult.findMany({
+      where: { subjectType: 'post', subjectId: { in: postIds }, kind: 'sentiment_reasons' },
+    });
+
+    const captionById = new Map(posts.map(p => [p.id, p.caption]));
+
+    return results.map(r => {
+      const payload = r.payload as any;
+      return {
+        postId: r.subjectId,
+        caption: captionById.get(r.subjectId) ?? '',
+        dominantLabel: payload.dominant_label,
+        commentCount: payload.comment_count,
+        keywords: payload.keywords,
+      };
+    });
+  }
 
   async getHashtagAnalysis(accountId: string, userId: string, userRole: Role): Promise<HashtagAnalysis[]> {
     await this.findOne(accountId, userId, userRole);
@@ -440,5 +503,112 @@ export class AccountsService {
     }
 
     return analysisResult.payload;
+  }
+
+  async getLikesBaseline(accountId: string, userId: string, userRole: Role) {
+    await this.findOne(accountId, userId, userRole);
+
+    const analysisResult = await this.prisma.analysisResult.findFirst({
+      where: {
+        subjectType: 'account',
+        subjectId: accountId,
+        kind: 'likes_baseline',
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!analysisResult || !analysisResult.payload) {
+      return null;
+    }
+
+    const payload = analysisResult.payload as any;
+
+    // snake_case gelebilecek alanları camelCase'e mapleme/garantiye alma
+    return {
+      mae: payload.mae ?? payload.MAE ?? 0,
+      naiveMae: payload.naive_mae ?? payload.naiveMae ?? payload.naiveMAE ?? 0,
+      modelType: payload.model_type ?? payload.modelType ?? 'ridge',
+      beatsNaive: payload.beats_naive ?? payload.beatsNaive ?? false,
+      sampleSize: payload.sample_size ?? payload.sampleSize ?? 0,
+      createdAt: analysisResult.createdAt,
+    };
+  }
+
+  async getSpamSummary(accountId: string, userId: string, userRole: Role) {
+    await this.findOne(accountId, userId, userRole);
+
+    // Hesaba bağlı tüm postları ve yorumların hem id'sini hem text'ini çekiyoruz
+    const posts = await this.prisma.post.findMany({
+      where: { accountId },
+      include: { comments: { select: { id: true, text: true } } },
+    });
+
+    const commentTextMap = new Map<string, string>();
+    const allCommentIds: string[] = [];
+
+    for (const post of posts) {
+      for (const comment of post.comments) {
+        allCommentIds.push(comment.id);
+        commentTextMap.set(comment.id, comment.text);
+      }
+    }
+
+    if (allCommentIds.length === 0) {
+      return {
+        totalCommentsAnalyzed: 0,
+        spamCount: 0,
+        spamRate: 0,
+        flaggedComments: [],
+      };
+    }
+
+    // Bu yorumlara ait kind: 'spam' analiz sonuçlarını çekiyoruz
+    const spamResults = await this.prisma.analysisResult.findMany({
+      where: {
+        subjectType: 'comment',
+        subjectId: { in: allCommentIds },
+        kind: 'spam',
+      },
+    });
+
+    let spamCount = 0;
+    const totalCommentsAnalyzed = spamResults.length;
+    const flaggedComments: Array<{
+      commentId: string;
+      text: string;
+      confidence: number;
+    }> = [];
+
+    for (const result of spamResults) {
+      const payload = result.payload as {
+        is_spam?: boolean;
+        isSpam?: boolean;
+        confidence?: number;
+        score?: number;
+      };
+      
+      const isSpam = payload?.is_spam ?? payload?.isSpam ?? false;
+
+      if (isSpam) {
+        spamCount += 1;
+        flaggedComments.push({
+          commentId: result.subjectId,
+          text: commentTextMap.get(result.subjectId) || '',
+          confidence: payload.confidence ?? payload.score ?? 0,
+        });
+      }
+    }
+
+    const spamRate =
+      totalCommentsAnalyzed > 0
+        ? Number(((spamCount / totalCommentsAnalyzed) * 100).toFixed(2))
+        : 0;
+
+    return {
+      totalCommentsAnalyzed,
+      spamCount,
+      spamRate,
+      flaggedComments,
+    };
   }
 }

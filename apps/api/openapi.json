@@ -76,6 +76,48 @@
         }
       }
     },
+    "/auth/forgot-password": {
+      "post": {
+        "operationId": "AuthController_forgotPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotPasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/auth/reset-password": {
+      "post": {
+        "operationId": "AuthController_resetPassword",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/auth/me": {
       "get": {
         "operationId": "AuthController_getMe",
@@ -409,6 +451,34 @@
         ]
       }
     },
+    "/accounts/{id}/sentiment-reasons": {
+      "get": {
+        "operationId": "AccountsController_getSentimentReasons",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "accounts"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/accounts/{id}/hashtags": {
       "get": {
         "operationId": "AccountsController_getHashtagAnalysis",
@@ -468,6 +538,62 @@
     "/accounts/{id}/best-times": {
       "get": {
         "operationId": "AccountsController_getBestTimes",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "accounts"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/accounts/{id}/likes-baseline": {
+      "get": {
+        "operationId": "AccountsController_getLikesBaseline",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "accounts"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/accounts/{id}/spam-summary": {
+      "get": {
+        "operationId": "AccountsController_getSpamSummary",
         "parameters": [
           {
             "name": "id",
@@ -557,6 +683,38 @@
         "required": [
           "email",
           "password"
+        ]
+      },
+      "ForgotPasswordDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Şifresi sıfırlanacak kullanıcının e-posta adresi",
+            "example": "user@example.com"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "ResetPasswordDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Şifre sıfırlama tokenı (forgot-password sonrası üretilen)",
+            "example": "d41d8cd98f00b204e9800998ecf8427e..."
+          },
+          "newPassword": {
+            "type": "string",
+            "description": "Yeni kullanıcı şifresi (en az 8 karakter)",
+            "example": "YeniSifre123!"
+          }
+        },
+        "required": [
+          "token",
+          "newPassword"
         ]
       },
       "RefreshTokenDto": {
