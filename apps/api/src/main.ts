@@ -20,9 +20,12 @@ async function bootstrap() {
   expressApp.set('trust proxy', 1);
 
   // S3.4: Sıkı ve eksiksiz Helmet Güvenlik Başlıkları
+  // Geliştirme ortamında (localhost) Bull Board ve Swagger'ın rahat çalışması için
+  const isDev = process.env.NODE_ENV !== 'production';
+
   app.use(
     helmet({
-      contentSecurityPolicy: {
+      contentSecurityPolicy: isDev ? false : {
         directives: {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "cdnjs.cloudflare.com"],
@@ -31,6 +34,7 @@ async function bootstrap() {
           fontSrc: ["'self'", "fonts.gstatic.com"],
         },
       },
+      crossOriginResourcePolicy: { policy: "cross-origin" },
       crossOriginEmbedderPolicy: false,
     }),
   );

@@ -42,7 +42,7 @@ export class ApiDataMapper {
     const commentsCount = rawData.comments_count ?? rawData.commentsCount ?? rawData.comment_count ?? comments.length;
 
     // Basit bir etkileşim oranı (Engagement Rate) hesaplaması: (Beğeni + Yorum) / Erişim
-    const engagementRate = reach > 0 ? (likes + commentsCount) / reach : 0;
+    const engagementRate = reach > 0 ? ((likes + commentsCount) / reach) * 100 : 0;
 
     // Medya tipini dinamik olarak belirle
     let normalizedType = rawData.media_type || rawData.postType || rawData.type || 'UNKNOWN';
@@ -55,11 +55,13 @@ export class ApiDataMapper {
       normalizedType = 'CAROUSEL';
     }
 
+    const imageUrl = rawData.mediaUrl || rawData.displayUrl || rawData.imageUrl || rawData.thumbnailUrl || rawData.image_url || null;
     // 3. Ortak Şemayı Döndür
     return {
       igMediaId: rawData.id || rawData.igMediaId || rawData.mediaId,
       type: normalizedType,
       caption: rawData.caption || rawData.text || null,
+      imageUrl: imageUrl,
       postedAt: rawData.timestamp || rawData.postedAt ? new Date(rawData.timestamp || rawData.postedAt) : new Date(),
       permalink: rawData.permalink || rawData.url || null,
       metrics: {

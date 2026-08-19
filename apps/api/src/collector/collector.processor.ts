@@ -9,7 +9,7 @@ import { ApiDataMapper } from '../common/mappers/api-data.mapper';
 import { ScrapeDataMapper } from '../common/mappers/scrape-data.mapper';
 import { MockDataMapper } from '../common/mappers/mock-data.mapper';
 import { NormalizedPost } from '../common/mappers/normalized-post.interface';
-import { TokenEncryptionService } from '../common/encryption/token-encryption.service'; // Token şifre çözme servisi
+import { TokenEncryptionService } from '../common/encryption/token-encryption.service';
 
 @Processor('collect')
 @Injectable()
@@ -20,7 +20,7 @@ export class CollectorProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly dataSourceFactory: DataSourceFactory,
     private readonly cacheService: CacheService,
-    private readonly tokenEncryption: TokenEncryptionService, // Ekledik
+    private readonly tokenEncryption: TokenEncryptionService,
   ) {
     super();
   }
@@ -33,6 +33,7 @@ export class CollectorProcessor extends WorkerHost {
     this.logger.log(`[BullMQ] 'collect' işi başladı! Job ID: ${job.id}`);
 
     const accountId = job.data?.accountId;
+    const isDeepScan = job.data?.deep === true;
 
     const accounts = accountId
       ? await this.prisma.trackedAccount.findMany({ where: { id: accountId, status: 'active' } })
@@ -46,7 +47,6 @@ export class CollectorProcessor extends WorkerHost {
     }
 
     for (const account of accounts) {
-      // Veritabanındaki şifreli token'ı burada çözüyoruz!
       let decryptedAccessToken = account.accessTokenEnc;
       if (account.accessTokenEnc) {
         try {
@@ -65,23 +65,56 @@ export class CollectorProcessor extends WorkerHost {
       });
 
       try {
-        if (!account.igAccountId) {
-          throw new Error('Eksik Parametre: igAccountId tanımlı değil.');
-        }
-        
         const rawSourceType = account.sourceType ? account.sourceType.toLowerCase() : 'real';
-        const sourceTypeKey = rawSourceType === 'api' ? 'real' : rawSourceType; 
-        
+        const sourceTypeKey = rawSourceType === 'api' ? 'real' : rawSourceType;
+
+        if (sourceTypeKey === 'real' && !account.igAccountId) {
+          throw new Error('Eksik Parametre: igAccountId tanımlı değil (API kaynağı için zorunlu).');
+        }
+
         const dataSource = this.dataSourceFactory.getSource(sourceTypeKey);
 
-        this.logger.log(`Hesap işleniyor: ${account.igUsername} (ID: ${account.id}) - Kaynak: ${sourceTypeKey}`);
+        this.logger.log(`Hesap işleniyor: ${account.igUsername} (ID: ${account.id}) - Kaynak: ${sourceTypeKey} (Derin Tarama: ${isDeepScan})`);
 
-        // Veriyi çözülmüş token ile çek
-        const rawPostsResponse = await dataSource.fetchPosts({
+        let scrapeParams: any = {
           accessToken: decryptedAccessToken,
           igAccountId: account.igAccountId,
           platform: account.igUsername,
-        });
+        };
+
+        if (sourceTypeKey === 'scrape' || sourceTypeKey === 'scraping') {
+          if (isDeepScan) {
+            scrapeParams = { ...scrapeParams, maxPosts: 200, maxComments: 10 };
+          } else {
+            const sinceDate = new Date();
+            sinceDate.setDate(sinceDate.getDate() - 7);
+            scrapeParams = { ...scrapeParams, since: sinceDate.toISOString(), maxPosts: 30 };
+          }
+        }
+
+        // 1. ÖNCE PROFİL ÇEKİLİYOR (Engagement rate hesabı için takipçi sayısı önceden lazım)
+        let followersCount = 0;
+        let followingCount = 0;
+        try {
+          const dsAny = dataSource as any;
+          const profileFunc = dsAny.fetchAccountProfile || dsAny.fetchProfile;
+          if (typeof profileFunc === 'function') {
+            const profileResult = await profileFunc.call(dataSource, {
+              accessToken: decryptedAccessToken,
+              igAccountId: account.igAccountId,
+              platform: account.igUsername,
+            });
+            const profileData = profileResult?.data || profileResult;
+            followersCount = profileData?.followersCount ?? profileData?.followers_count ?? 0;
+            followingCount = profileData?.followingCount ?? profileData?.follows_count ?? profileData?.following_count ?? 0;
+          }
+        } catch (profileErr: unknown) {
+          const msg = profileErr instanceof Error ? profileErr.message : String(profileErr);
+          this.logger.warn(`Profil çekilirken hata oluştu, followersCount=0 kullanılacak: ${msg}`);
+        }
+
+        // 2. SONRA POSTLAR ÇEKİLİYOR
+        const rawPostsResponse = await dataSource.fetchPosts(scrapeParams);
 
         let totalItemsCollected = 0;
         const postsList = rawPostsResponse?.data || [];
@@ -93,7 +126,8 @@ export class CollectorProcessor extends WorkerHost {
           if (sourceTypeKey === 'real') {
             normalizedPost = ApiDataMapper.mapToNormalized(item);
           } else if (sourceTypeKey === 'scrape' || sourceTypeKey === 'scraping') {
-            normalizedPost = ScrapeDataMapper.mapToNormalized(item);
+            // TAKİPÇİ SAYISI MAPPER'A AKTARILIYOR
+            normalizedPost = ScrapeDataMapper.mapToNormalized(item, followersCount);
           } else {
             normalizedPost = MockDataMapper.mapToNormalized(item);
           }
@@ -113,12 +147,14 @@ export class CollectorProcessor extends WorkerHost {
             update: { 
               caption: normalizedPost.caption,
               type: mediaType,
+              imageUrl: normalizedPost.imageUrl,
             },
             create: {
               accountId: account.id,
               igMediaId: normalizedPost.igMediaId,
               type: mediaType,
               caption: normalizedPost.caption,
+              imageUrl: normalizedPost.imageUrl,
               postedAt: normalizedPost.postedAt || new Date(),
               permalink: normalizedPost.permalink || `https://instagram.com/p/${normalizedPost.igMediaId}`,
             },
@@ -128,7 +164,7 @@ export class CollectorProcessor extends WorkerHost {
           const commentsCount = normalizedPost.metrics?.commentsCount || 0;
           const reachCount = normalizedPost.metrics?.reach || 0;
           const viewsCount = normalizedPost.metrics?.views || 0;
-          const engagementRate = normalizedPost.metrics?.engagementRate || (likesCount + commentsCount);
+          const engagementRate = normalizedPost.metrics?.engagementRate ?? 0;
 
           await this.prisma.postMetric.upsert({
             where: { postId: savedPost.id },
@@ -154,7 +190,7 @@ export class CollectorProcessor extends WorkerHost {
           if (!commentsData || (Array.isArray(commentsData) && commentsData.length === 0)) {
             try {
               const commentsResponse = await dataSource.fetchComments({
-                accessToken: decryptedAccessToken, // Çözülmüş token kullanılıyor
+                accessToken: decryptedAccessToken,
                 igMediaId: normalizedPost.igMediaId,
               });
 
@@ -170,7 +206,7 @@ export class CollectorProcessor extends WorkerHost {
                 }));
               }
             } catch (err) {
-              const errorMessage = err instanceof Error ? err.message : String(err);
+              // Hata yutulur
             }
           }
 
@@ -212,38 +248,8 @@ export class CollectorProcessor extends WorkerHost {
           this.logger.log(`Cache invalidated: overview:${account.id}:*`);
         }
 
+        // 3. EN BAŞTA ÇEKİLEN PROFİL BİLGİLERİYLE METRİK KAYDI YAPILIYOR (Mükerrer istek kaldırıldı)
         try {
-          let followersCount = 0;
-          let followingCount = 0;
-
-          const dsAny = dataSource as any;
-          const profileFunc = dsAny.fetchAccountProfile || dsAny.fetchProfile;
-
-          if (typeof profileFunc === 'function') {
-            const profileResult = await profileFunc.call(dataSource, {
-              accessToken: decryptedAccessToken, // Çözülmüş token kullanılıyor
-              igAccountId: account.igAccountId,
-              platform: account.igUsername,
-            });
-
-            const profileData = profileResult?.data || profileResult;
-
-            followersCount = 
-              profileData?.followersCount ?? 
-              profileData?.followers_count ?? 
-              0;
-
-            followingCount = 
-              profileData?.followingCount ?? 
-              profileData?.follows_count ?? 
-              profileData?.following_count ?? 
-              0;
-          }
-
-          await this.prisma.accountMetric.deleteMany({
-            where: { accountId: accountId },
-          });
-
           await this.prisma.accountMetric.create({
             data: {
               accountId: account.id,
@@ -281,10 +287,12 @@ export class CollectorProcessor extends WorkerHost {
           this.logger.warn(`AI hesap analizi tetiklenirken hata oluştu: ${aiErrMsg}`);
         }
 
+        await this.wait(1500);
+
         try {
           const commentsToAnalyze = await this.prisma.comment.findMany({
             where: { post: { accountId: account.id } },
-            select: { id: true, text: true },
+            select: { id: true, text: true, postId: true },
           });
 
           if (commentsToAnalyze.length > 0) {
@@ -305,6 +313,7 @@ export class CollectorProcessor extends WorkerHost {
                 comments: commentsToAnalyze.map((c) => ({
                   comment_id: c.id,
                   text: c.text,
+                  post_id: c.postId,
                 })),
               }),
             });

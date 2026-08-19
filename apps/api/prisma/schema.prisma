@@ -43,6 +43,7 @@ model Post {
   igMediaId   String         @unique @map("ig_media_id")
   type        String
   caption     String?
+  imageUrl  String?
   postedAt    DateTime?      @map("posted_at")
   permalink   String?
   comments    Comment[]
@@ -150,6 +151,16 @@ model RefreshToken {
   @@index([family])
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 enum Role {

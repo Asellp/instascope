@@ -6,9 +6,9 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
-
+import { MailModule } from '../mail/mail.module';
 @Module({
-  imports: [PrismaModule, PassportModule.register({ defaultStrategy: 'jwt' })],
+  imports: [PrismaModule, MailModule, PassportModule.register({ defaultStrategy: 'jwt' })],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, JwtAuthGuard, RolesGuard],
   exports: [AuthService, JwtAuthGuard, RolesGuard],

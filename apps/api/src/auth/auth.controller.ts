@@ -16,6 +16,8 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
 
 // JwtStrategy.validate()'in döndürdüğü şekille birebir uyumlu.
 // req.user.userId DEĞİL, req.user.id kullanılmalı (bir önceki bug buradaydı).
@@ -29,6 +31,7 @@ export class AuthController {
 
   // 1. Kullanıcı Kaydı (Register)
   @Post('register')
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
   @HttpCode(HttpStatus.OK)
   async register(
     @Body() body: RegisterDto,
@@ -66,6 +69,24 @@ export class AuthController {
     return { user };
   }
 
+  // 3. Şifre Sıfırlama İsteği (Forgot Password) - Email bombing önlemi
+  @Post('forgot-password')
+  @Throttle({ default: { ttl: 900000, limit: 3 } }) // 15 dakikada max 3 istek
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    await this.authService.forgotPassword(dto.email);
+    return { message: 'Eğer kayıtlı bir hesap varsa şifre sıfırlama bağlantısı gönderildi.' };
+  }
+
+  // 4. Şifreyi Yenileme (Reset Password)
+  @Post('reset-password')
+  @Throttle({ default: { ttl: 60000, limit: 5 } }) // Dakikada max 5 deneme
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() body: ResetPasswordDto) {
+    await this.authService.resetPassword(body.token, body.newPassword);
+    return { message: 'Şifreniz başarıyla güncellendi.' };
+  }
+
   // 3. Oturum Doğrulama (GET /auth/me)
   @UseGuards(JwtAuthGuard)
   @Get('me')
@@ -92,6 +113,7 @@ export class AuthController {
 
   // 5. Token Yenileme
   @Post('refresh')
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
   @HttpCode(HttpStatus.OK)
   async refresh(
     @Body() body: RefreshTokenDto,

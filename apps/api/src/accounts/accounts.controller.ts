@@ -95,6 +95,13 @@ export class AccountsController {
     const user = req.user;
     return this.accountsService.getSentimentBreakdown(id, user.userId || user.id, user.role);
   }
+  // AI Tarafından İstenen Yeni Endpoint: sentiment-reasons
+  @Get(':id/sentiment-reasons')
+  @HttpCode(HttpStatus.OK)
+  getSentimentReasons(@Param('id') id: string, @Req() req: any) {
+    const user = req.user;
+    return this.accountsService.getSentimentReasons(id, user.userId || user.id, user.role);
+  }
 
   // B3.3 - GET /accounts/:id/hashtags
   @Get(':id/hashtags')
@@ -123,5 +130,25 @@ export class AccountsController {
   async getBestTimes(@Param('id') id: string, @Req() req: any) {
     const user = req.user;
     return this.accountsService.getBestTimes(id, user.userId || user.id, user.role);
+  }
+
+  @Get(':id/likes-baseline')
+  async getLikesBaseline(
+    @Param('id') id: string,
+    @Req() req: any,
+  ) {
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+    return this.accountsService.getLikesBaseline(id, userId, userRole);
+  }
+
+  @Get(':id/spam-summary')
+  async getSpamSummary(
+    @Param('id') id: string,
+    @Req() req: any,
+  ) {
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+    return this.accountsService.getSpamSummary(id, userId, userRole);
   }
 }

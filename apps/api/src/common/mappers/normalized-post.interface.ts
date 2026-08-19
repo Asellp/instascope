@@ -8,6 +8,7 @@ export interface NormalizedPost {
   igMediaId: string;
   type: string;          // Örn: 'IMAGE', 'VIDEO', 'CAROUSEL'
   caption?: string;
+  imageUrl?: string | null;
   postedAt?: Date;
   permalink?: string;
   metrics: {

@@ -4,11 +4,13 @@ import { AccountsController } from './accounts.controller';
 import { AccountsService } from './accounts.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { TokenEncryptionModule } from '../common/encryption/token-encryption.module';
+import { AuditModule } from 'src/common/audit/audit.module';
 
 @Module({
   imports: [
     PrismaModule,
-    TokenEncryptionModule, // <-- Bunu ekliyoruz
+    AuditModule,
+    TokenEncryptionModule,
     BullModule.registerQueue({
       name: 'collect',
     }),
