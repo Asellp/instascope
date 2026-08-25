@@ -1,1 +1,3 @@
 apps/ai/.env
+apps/ai/.venv/
+apps/scraper/.venv/
