@@ -1,3 +1,4 @@
+<!-- apps/web/app/pages/accounts/index.vue -->
 <template>
   <div class="accounts-page">
 
@@ -72,10 +73,21 @@
 
           <div class="dropdown-wrapper">
             <button class="menu-btn" @click.stop="toggleMenu(acc.id)">•••</button>
-            <div v-if="activeMenuId === acc.id" class="dropdown-menu glass-effect">
-              <button class="dropdown-item" @click="activeMenuId = null">📊 Detaylı Analiz</button>
-              <button class="dropdown-item" @click="activeMenuId = null">🔄 Verileri Yenile</button>
-              <button class="dropdown-item danger" @click="activeMenuId = null">🗑️ Takibi Bırak</button>
+            <div v-if="activeMenuId === acc.id" class="dropdown-menu glass-effect" @click.stop>
+              <!-- 1. DETAYLI ANALİZ -->
+              <button class="dropdown-item" @click="handleGoToDetail(acc.id)">
+                📊 Detaylı Analiz
+              </button>
+
+              <!-- 2. VERİLERİ YENİLE -->
+              <button class="dropdown-item" :disabled="isRefreshing" @click="handleRefreshAccount(acc.id)">
+                🔄 {{ isRefreshing ? 'Yenileniyor...' : 'Verileri Yenile' }}
+              </button>
+
+              <!-- 3. TAKİBİ BIRAK (ONAY MODALI AÇAR) -->
+              <button class="dropdown-item danger" :disabled="deletingId === acc.id" @click="openDeleteModal(acc)">
+                🗑️ Takibi Bırak
+              </button>
             </div>
           </div>
         </div>
@@ -149,11 +161,49 @@
       </div>
     </div>
 
+    <!-- ONAY MODALI (CONFIRMATION MODAL) -->
+    <Teleport to="body">
+      <transition name="modal-fade">
+        <div v-if="accountToDelete" class="modal-overlay" @click="accountToDelete = null">
+          <div class="modal-card" @click.stop>
+            <div class="modal-icon-box">
+              <span>🗑️</span>
+            </div>
+            
+            <h3 class="modal-title font-serif-display">Takibi Bırakmak İstiyor Musunuz?</h3>
+            <p class="modal-desc">
+              <strong class="highlight-user">@{{ accountToDelete.igUsername || accountToDelete.name }}</strong> hesabını takipten çıkarmak üzeresiniz. Bu hesaba ait tüm geçmiş analitik verileri ve raporlar sistemden silinecektir.
+            </p>
+
+            <div class="modal-actions">
+              <button 
+                type="button" 
+                class="btn-cancel" 
+                :disabled="deletingId !== null" 
+                @click="accountToDelete = null"
+              >
+                Vazgeç
+              </button>
+              <button 
+                type="button" 
+                class="btn-danger-confirm" 
+                :disabled="deletingId !== null" 
+                @click="confirmDeleteAccount"
+              >
+                {{ deletingId !== null ? 'Siliniyor...' : 'Evet, Takibi Bırak' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import auth from '~/middleware/auth'
 import { useApi } from '~/composables/useApi'
 
@@ -161,10 +211,14 @@ definePageMeta({
   middleware: auth
 })
 
+const router = useRouter()
 const searchQuery = ref('')
 const activeFilter = ref('Tümü')
 const rawAccounts = ref<any[]>([])
 const loading = ref(true)
+const isRefreshing = ref(false)
+const deletingId = ref<string | number | null>(null)
+const accountToDelete = ref<any | null>(null)
 const accessDenied = ref(false)
 const fetchError = ref(false)
 const activeMenuId = ref<string | number | null>(null)
@@ -176,7 +230,6 @@ const api = useApi()
 const borderClasses = ['border-grad-orange', 'border-grad-pink', 'border-grad-purple', 'border-grad-cyan', 'border-grad-green']
 const avatarBgs = ['bg-orange-red', 'bg-pink-purple', 'bg-teal-cyan', 'bg-purple-blue', 'bg-green-teal']
 
-// API'den dönen verileri renkli görsel sınıflarla zenginleştiren fonksiyon
 function enrichAccount(acc: any, index: number) {
   const avatarText = (acc.igUsername || acc.name || 'IG').substring(0, 2).toUpperCase()
   return {
@@ -212,6 +265,56 @@ async function fetchAccounts() {
   }
 }
 
+// 1. DETAYLI ANALİZE GİT
+function handleGoToDetail(id: string | number) {
+  activeMenuId.value = null
+  router.push(`/accounts/${id}`)
+}
+
+// 2. VERİLERİ YENİLE
+async function handleRefreshAccount(id: string | number) {
+  activeMenuId.value = null
+  isRefreshing.value = true
+  try {
+    const updated = await api.getAccountById(id)
+    const idx = rawAccounts.value.findIndex(a => a.id === id)
+    if (idx !== -1) {
+      rawAccounts.value[idx] = updated
+    } else {
+      await fetchAccounts()
+    }
+  } catch (err) {
+    console.error('Hesap verisi yenilenemedi:', err)
+    await fetchAccounts()
+  } finally {
+    isRefreshing.value = false
+  }
+}
+
+// 3. TAKİBİ BIRAK (MODALI TETİKLER)
+function openDeleteModal(acc: any) {
+  activeMenuId.value = null
+  accountToDelete.value = acc
+}
+
+async function confirmDeleteAccount() {
+  if (!accountToDelete.value) return
+
+  const targetId = accountToDelete.value.id
+  deletingId.value = targetId
+
+  try {
+    await api.deleteAccount(targetId)
+    rawAccounts.value = rawAccounts.value.filter(a => a.id !== targetId)
+    accountToDelete.value = null
+  } catch (err) {
+    console.error('Hesap silinemedi:', err)
+    alert('Hesap silinirken bir hata oluştu veya bu işlem için yetkiniz yok.')
+  } finally {
+    deletingId.value = null
+  }
+}
+
 async function handleWizardSuccess() {
   isWizardOpen.value = false
   await fetchAccounts()
@@ -234,7 +337,6 @@ const toggleMenu = (id: string | number) => {
   activeMenuId.value = activeMenuId.value === id ? null : id
 }
 
-// Görsel sınıfları eklenmiş hesaplar
 const accounts = computed(() => {
   return rawAccounts.value.map((acc, idx) => enrichAccount(acc, idx))
 })
@@ -460,10 +562,13 @@ const filteredAccounts = computed(() => {
   text-align: left;
   border-radius: 8px;
   cursor: pointer;
+  transition: background 0.15s ease;
 }
 
-.dropdown-item:hover { background: var(--muted); }
+.dropdown-item:hover:not(:disabled) { background: var(--muted); }
+.dropdown-item:disabled { opacity: 0.5; cursor: not-allowed; }
 .dropdown-item.danger { color: var(--destructive); }
+.dropdown-item.danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.12); }
 
 .badges-row {
   display: flex;
@@ -563,5 +668,122 @@ const filteredAccounts = computed(() => {
 @keyframes pulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.8; }
+}
+
+/* ONAY MODALI (CONFIRMATION MODAL) STİLLERİ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  padding: 20px;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card, 20px);
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+.modal-icon-box {
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  margin-bottom: 16px;
+}
+
+.modal-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--foreground);
+  margin: 0 0 8px 0;
+}
+
+.modal-desc {
+  font-size: 0.84rem;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+  margin: 0 0 24px 0;
+}
+
+.highlight-user {
+  color: var(--brand);
+  font-weight: 700;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+}
+
+.btn-cancel {
+  flex: 1;
+  background: var(--background);
+  border: 1px solid var(--border-strong);
+  color: var(--foreground);
+  padding: 11px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-cancel:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.btn-danger-confirm {
+  flex: 1;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  border: none;
+  color: #fff;
+  padding: 11px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+}
+
+.btn-danger-confirm:hover:not(:disabled) {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.btn-cancel:disabled,
+.btn-danger-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity 0.25s ease;
+}
+
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
 }
 </style>

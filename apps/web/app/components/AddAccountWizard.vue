@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import type { CreateAccountDto, Frequency } from '@instascope/shared'
 import { useApi } from '~/composables/useApi'
 
@@ -26,6 +26,73 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const api = useApi()
 
+// ============ COOLDOWN (hesap ekleme rate limit sayacı) ============
+// Backend, 429 (Too Many Requests) ile hesap eklemeyi 5 dakikada bir sınırlıyor
+// ve başarılı eklemede nextAllowedAt (ISO tarih) dönüyor. Sayfa yenilense bile
+// sayacın kaldığı yerden devam etmesi için localStorage'a yazıyoruz.
+const COOLDOWN_STORAGE_KEY = 'instascope-add-account-cooldown-until'
+
+const cooldownUntil = ref<number | null>(null) // epoch ms
+const remainingSeconds = ref(0)
+let cooldownTimer: ReturnType<typeof setInterval> | null = null
+
+const isCoolingDown = computed(() => remainingSeconds.value > 0)
+
+const cooldownLabel = computed(() => {
+  const mins = Math.floor(remainingSeconds.value / 60)
+  const secs = remainingSeconds.value % 60
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+})
+
+function stopCooldownTimer() {
+  if (cooldownTimer) clearInterval(cooldownTimer)
+  cooldownTimer = null
+}
+
+function tickCooldown() {
+  if (!cooldownUntil.value) {
+    remainingSeconds.value = 0
+    stopCooldownTimer()
+    return
+  }
+  const diffSeconds = Math.ceil((cooldownUntil.value - Date.now()) / 1000)
+  if (diffSeconds <= 0) {
+    remainingSeconds.value = 0
+    cooldownUntil.value = null
+    localStorage.removeItem(COOLDOWN_STORAGE_KEY)
+    stopCooldownTimer()
+  } else {
+    remainingSeconds.value = diffSeconds
+  }
+}
+
+function startCooldown(nextAllowedAtIso: string) {
+  const untilMs = new Date(nextAllowedAtIso).getTime()
+  if (Number.isNaN(untilMs) || untilMs <= Date.now()) return
+
+  cooldownUntil.value = untilMs
+  localStorage.setItem(COOLDOWN_STORAGE_KEY, String(untilMs))
+  tickCooldown()
+  stopCooldownTimer()
+  cooldownTimer = setInterval(tickCooldown, 1000)
+}
+
+onMounted(() => {
+  const stored = localStorage.getItem(COOLDOWN_STORAGE_KEY)
+  if (stored) {
+    const untilMs = Number(stored)
+    if (!Number.isNaN(untilMs) && untilMs > Date.now()) {
+      cooldownUntil.value = untilMs
+      tickCooldown()
+      cooldownTimer = setInterval(tickCooldown, 1000)
+    } else {
+      localStorage.removeItem(COOLDOWN_STORAGE_KEY)
+    }
+  }
+})
+
+// ============ ADIM GEÇİŞLERİ ============
+
 function nextStep() {
   if (currentStep.value === 1 && !formData.username.trim()) {
     errorMessage.value = 'Lütfen geçerli bir Instagram kullanıcı adı girin.'
@@ -46,6 +113,8 @@ function stopPolling() {
 }
 
 async function handleCreateAccount() {
+  if (isCoolingDown.value) return
+
   isSubmitting.value = true
   collectionStatus.value = 'pending'
   errorMessage.value = null
@@ -53,12 +122,30 @@ async function handleCreateAccount() {
   try {
     const created = await api.createAccount(formData)
     createdAccountId.value = created.id
+
+    if (created.nextAllowedAt) {
+      startCooldown(created.nextAllowedAt)
+    }
+
     collectionStatus.value = 'in_progress'
     startPolling()
-  } catch (error) {
+  } catch (error: any) {
     console.error('Hesap oluşturma hatası:', error)
     collectionStatus.value = 'failed'
-    errorMessage.value = 'Hesap eklenirken sunucu hatası oluştu. Lütfen bilgileri kontrol edip tekrar deneyin.'
+
+    const status = error?.response?.status ?? error?.statusCode
+    if (status === 429) {
+      errorMessage.value = 'Çok fazla istek gönderildi. Lütfen yeni bir hesap eklemeden önce 5 dakika bekleyin.'
+      // Backend'in cevabında nextAllowedAt varsa gerçek süreyi kullan, yoksa 5 dakikalık varsayılana düş.
+      const serverNextAllowedAt = error?.data?.nextAllowedAt ?? error?.response?._data?.nextAllowedAt
+      if (serverNextAllowedAt) {
+        startCooldown(serverNextAllowedAt)
+      } else {
+        startCooldown(new Date(Date.now() + 5 * 60 * 1000).toISOString())
+      }
+    } else {
+      errorMessage.value = 'Hesap eklenirken sunucu hatası oluştu. Lütfen bilgileri kontrol edip tekrar deneyin.'
+    }
   } finally {
     isSubmitting.value = false
   }
@@ -92,7 +179,10 @@ function startPolling() {
   }, 2000)
 }
 
-onUnmounted(stopPolling)
+onUnmounted(() => {
+  stopPolling()
+  stopCooldownTimer()
+})
 </script>
 
 <template>
@@ -111,6 +201,15 @@ onUnmounted(stopPolling)
         </span>
       </div>
     </div>
+
+    <transition name="fade">
+      <div v-if="isCoolingDown" class="cooldown-banner">
+        <span class="cooldown-icon">⏳</span>
+        <span>
+          Yeni bir hesap eklemek için <strong>{{ cooldownLabel }}</strong> bekleyin...
+        </span>
+      </div>
+    </transition>
 
     <!-- ADIM 1 -->
     <div v-if="currentStep === 1" class="step-body">
@@ -242,10 +341,10 @@ onUnmounted(stopPolling)
           v-if="collectionStatus === 'idle' || collectionStatus === 'failed'"
           type="button"
           class="btn-primary-grad"
-          :disabled="isSubmitting"
+          :disabled="isSubmitting || isCoolingDown"
           @click="handleCreateAccount"
         >
-          {{ collectionStatus === 'failed' ? 'Tekrar Dene' : 'Hesabı Ekle ve Başlat' }}
+          {{ isCoolingDown ? `Bekleyin (${cooldownLabel})` : (collectionStatus === 'failed' ? 'Tekrar Dene' : 'Hesabı Ekle ve Başlat') }}
         </button>
 
         <button
@@ -336,6 +435,30 @@ onUnmounted(stopPolling)
   font-weight: 600;
   color: var(--foreground);
 }
+
+/* ============ COOLDOWN BANNER ============ */
+.cooldown-banner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--warning);
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.cooldown-icon { font-size: 0.95rem; }
+
+.fade-enter-active,
+.fade-leave-active { transition: opacity 0.2s ease; }
+.fade-enter-from,
+.fade-leave-to { opacity: 0; }
 
 /* ============ İÇERİK BAŞLIKLARI ============ */
 .step-body { position: relative; z-index: 1; }

@@ -368,7 +368,7 @@ export interface SentimentPostItem {
   totalAnalyzedComments: number
 }
 
-export interface SentimentData {
+export interface MockSentimentData {
   distribution: {
     positive: number
     neutral: number

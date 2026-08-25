@@ -269,23 +269,26 @@ export const useApi = () => {
       return mapAccount(raw, overview)
     },
 
-    createAccount: async (data: CreateAccountDto): Promise<Account> => {
+    createAccount: async (data: CreateAccountDto): Promise<Account & { nextAllowedAt?: string }> => {
       if (isMock) {
         const newAccount = hydrateMockAccount(data)
         mockAccountsStore.push(newAccount)
         return newAccount
       }
+
+      const cleanUsername = data.username.trim().replace(/^@/, '')
       const raw = await $fetch<any>(`${baseUrl}/accounts`, {
         method: 'POST',
         body: {
-          ...data,
-          username: data.username.trim().replace(/^@/, ''),
-          sourceType: data.sourceType.toUpperCase()
+          username: cleanUsername,
+          sourceType: (data.sourceType || 'SCRAPE').toUpperCase()
         },
+        timeout: 300000, // 60 saniyelik bekleme süresi
         credentials: 'include',
         headers: apiHeaders(baseUrl)
       })
-      return mapAccount(raw)
+
+      return { ...mapAccount(raw), nextAllowedAt: raw.nextAllowedAt }
     },
 
     deleteAccount: async (id: string | number) => {
