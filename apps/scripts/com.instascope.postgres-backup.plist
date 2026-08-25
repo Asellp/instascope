@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.instascope.postgres-backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/zeyneptugcetuzsuz/instascope-scripts/backup_postgres.sh</string>
+    </array>
+
+    <!-- Her 7200 saniyede (2 saatte) bir çalışır -->
+    <key>StartInterval</key>
+    <integer>7200</integer>
+
+    <!-- Bilgisayar açılır açılmaz da bir kez çalışsın (uzun süre kapalıysa
+         hemen bir yedek alınsın diye) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/zeyneptugcetuzsuz/instascope-backups/backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/zeyneptugcetuzsuz/instascope-backups/backup-error.log</string>
+</dict>
+</plist>

@@ -1,0 +1,18 @@
+2026-08-18 10:19:40 | INFO     | scraper.scraper_service | Scraping başladı -> @sercankahvci
+2026-08-18 10:19:40 | INFO     | scraper.login | Session yükleniyor...
+2026-08-18 10:19:40 | INFO     | scraper.login | Session başarıyla yüklendi.
+2026-08-18 10:23:19 | INFO     | scraper.cache | Cache oluşturuldu: sercankahvci
+2026-08-18 10:23:19 | INFO     | scraper.scraper_service | Scraping tamamlandı. 9 gönderi, 45 yorum çekildi.
+2026-08-18 10:26:08 | INFO     | scraper.scraper_service | Scraping başladı -> @sercankahvci
+2026-08-18 10:26:08 | INFO     | scraper.login | Session yükleniyor...
+2026-08-18 10:26:08 | INFO     | scraper.login | Session başarıyla yüklendi.
+2026-08-18 10:32:03 | INFO     | scraper.scraper_service | Scraping başladı -> @sercankahvci
+2026-08-18 10:32:03 | INFO     | scraper.login | Session yükleniyor...
+2026-08-18 10:32:03 | INFO     | scraper.login | Session başarıyla yüklendi.
+2026-08-18 10:35:08 | INFO     | scraper.cache | Cache oluşturuldu: sercankahvci
+2026-08-18 10:35:08 | INFO     | scraper.scraper_service | Scraping tamamlandı. 9 gönderi, 45 yorum çekildi.
+2026-08-18 10:52:58 | INFO     | scraper.scraper_service | Scraping başladı -> @sercankahvci
+2026-08-18 10:52:58 | INFO     | scraper.login | Session yükleniyor...
+2026-08-18 10:52:58 | INFO     | scraper.login | Session başarıyla yüklendi.
+2026-08-18 10:56:14 | INFO     | scraper.cache | Cache oluşturuldu: sercankahvci
+2026-08-18 10:56:14 | INFO     | scraper.scraper_service | Scraping tamamlandı. 9 gönderi, 45 yorum çekildi.
