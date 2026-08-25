@@ -1,3 +1,13 @@
+<<<<<<< HEAD
 apps/ai/.env
 apps/ai/.venv/
 apps/scraper/.venv/
+=======
+node_modules/
+.env
+.env.*
+.nuxt/
+.output/
+.cache/
+dist/
+>>>>>>> frontend
