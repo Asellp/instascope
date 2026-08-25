@@ -1,8 +1,6 @@
-<<<<<<< HEAD
 apps/ai/.env
 apps/ai/.venv/
 apps/scraper/.venv/
-=======
 node_modules/
 .env
 .env.*
@@ -10,4 +8,3 @@ node_modules/
 .output/
 .cache/
 dist/
->>>>>>> frontend
