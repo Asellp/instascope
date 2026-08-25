@@ -5,9 +5,10 @@ import { Resend } from 'resend';
 export class MailService {
   private resend = new Resend(process.env.RESEND_API_KEY);
 
-  // Dönüş tipini açıkça Promise<any> veya Promise<void> olarak belirtiyoruz:
   async sendPasswordResetEmail(to: string, rawToken: string): Promise<any> {
-    const resetUrl = `http://localhost:3000/reset-password?token=${rawToken}`; // Portu 3000 yaptık
+    // Frontend URL'ini .env'den alıyoruz, yoksa varsayılan olarak localhost:3000 kullanıyoruz
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const resetUrl = `${frontendUrl}/reset-password?token=${rawToken}`;
 
     try {
       const data = await this.resend.emails.send({

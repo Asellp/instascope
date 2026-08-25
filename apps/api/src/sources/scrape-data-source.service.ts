@@ -22,22 +22,23 @@ export class ScrapeDataSourceService implements IDataSource {
       });
 
       if (!response.ok) {
-        throw new Error(`Scraper servisinden profil hatası döndü (${response.status}): ${response.statusText}`);
+        const errorBody = await response.json().catch(() => null);
+        throw new Error(`Scraper servisinden profil hatası döndü (${response.status}): ${errorBody?.detail || response.statusText}`);
       }
 
       const result = await response.json();
-      return result; // Gelen verinin içinde followersCount / followingCount olduğunu varsayıyoruz
+      return result; 
     } catch (error: unknown) {
       const errMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Scrape profile isteği başarısız oldu: ${errMessage}`);
-
+      
       if (error instanceof Error && error.name === 'AbortError') {
-        this.logger.error(`Scraper servisi zaman aşımına uğradı (3 dakika aşıldı).`);
+        this.logger.error(`Scraper servisi 15 dakikalık zaman aşımına uğradı (Profil - ${platform})!`);
+      } else {
+        this.logger.error(`Scrape profile isteği başarısız oldu. Platform: ${platform} | Hata: ${errMessage}`);
       }
       throw error;
-    }finally {
+    } finally {
       // --- TIMER TEMİZLİĞİ ---
-      // İstek ister başarılı ister hatalı sonuçlansın timer mutlaka temizlenir
       clearTimeout(timeoutId);
     }
   }
@@ -46,12 +47,11 @@ export class ScrapeDataSourceService implements IDataSource {
     const platform = params?.platform || params?.igUsername;
     this.logger.log(`Scrape üzerinden postlar çekiliyor. Platform/Username: ${platform}`);
 
-    // ---  TIMEOUT MEKANİZMASI  ---
+    // --- TIMEOUT MEKANİZMASI ---
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 900000); // 15 dk
     
     try {
-      // YENİ: since / maxPosts / maxComments artık scraper'a gerçekten iletiliyor
       const body: any = { platform };
       if (params?.since) body.since = params.since;
       if (params?.maxPosts) body.maxPosts = params.maxPosts;
@@ -74,10 +74,11 @@ export class ScrapeDataSourceService implements IDataSource {
       return result; 
     } catch (error: unknown) {
       const errMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Scrape posts isteği başarısız oldu: ${errMessage}`);
       
       if (error instanceof Error && error.name === 'AbortError') {
-        this.logger.error(`Scraper servisi zaman aşımına uğradı (3 dakika aşıldı).`);
+        this.logger.error(`Scraper servisi 15 dakikalık zaman aşımına uğradı (Postlar - ${platform})!`);
+      } else {
+        this.logger.error(`Scrape posts isteği başarısız oldu. Platform: ${platform} | Hata: ${errMessage}`);
       }
       throw error;
     } finally {

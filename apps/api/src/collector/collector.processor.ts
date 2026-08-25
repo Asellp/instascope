@@ -11,7 +11,9 @@ import { MockDataMapper } from '../common/mappers/mock-data.mapper';
 import { NormalizedPost } from '../common/mappers/normalized-post.interface';
 import { TokenEncryptionService } from '../common/encryption/token-encryption.service';
 
-@Processor('collect')
+@Processor('collect', {
+  concurrency: 1, // Aynı anda yalnızca 1 scraping işinin çalışmasını sağlar, Instagram'ı boğmaz.
+})
 @Injectable()
 export class CollectorProcessor extends WorkerHost {
   private readonly logger = new Logger(CollectorProcessor.name);
@@ -26,6 +28,12 @@ export class CollectorProcessor extends WorkerHost {
   }
 
   private wait(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // İstekler arasına insanî rastgele gecikmeler (jitter) ekler
+  private async randomDelay(minSec = 2, maxSec = 5) {
+    const ms = Math.floor(Math.random() * (maxSec - minSec + 1) + minSec) * 1000;
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
@@ -86,15 +94,24 @@ export class CollectorProcessor extends WorkerHost {
           if (isDeepScan) {
             scrapeParams = { ...scrapeParams, maxPosts: 200, maxComments: 10 };
           } else {
-            const sinceDate = new Date();
-            sinceDate.setDate(sinceDate.getDate() - 7);
-            scrapeParams = { ...scrapeParams, since: sinceDate.toISOString(), maxPosts: 30 };
+            const latestKnownPost = await this.prisma.post.findFirst({
+              where: { accountId: account.id },
+              orderBy: { postedAt: 'desc' },
+            });
+
+            if (latestKnownPost && latestKnownPost.postedAt) {
+              scrapeParams = { ...scrapeParams, since: latestKnownPost.postedAt.toISOString(), maxPosts: 30 };
+            } else {
+              scrapeParams = { ...scrapeParams, maxPosts: 30 };
+            }
           }
         }
 
-        // 1. ÖNCE PROFİL ÇEKİLİYOR (Engagement rate hesabı için takipçi sayısı önceden lazım)
+        // 1. ÖNCE PROFİL ÇEKİLİYOR
         let followersCount = 0;
         let followingCount = 0;
+        let isProfileFetchedSuccessfully = false;
+
         try {
           const dsAny = dataSource as any;
           const profileFunc = dsAny.fetchAccountProfile || dsAny.fetchProfile;
@@ -105,133 +122,199 @@ export class CollectorProcessor extends WorkerHost {
               platform: account.igUsername,
             });
             const profileData = profileResult?.data || profileResult;
-            followersCount = profileData?.followersCount ?? profileData?.followers_count ?? 0;
-            followingCount = profileData?.followingCount ?? profileData?.follows_count ?? profileData?.following_count ?? 0;
+            
+            const parsedFollowers = profileData?.followersCount ?? profileData?.followers_count ?? profileData?.followers;
+            const parsedFollowing = profileData?.followingCount ?? profileData?.follows_count ?? profileData?.following_count ?? profileData?.following;
+
+            if (parsedFollowers !== undefined && parsedFollowers !== null) {
+              followersCount = Number(parsedFollowers);
+              isProfileFetchedSuccessfully = true;
+            }
+            if (parsedFollowing !== undefined && parsedFollowing !== null) {
+              followingCount = Number(parsedFollowing);
+            }
+            
+            this.logger.log(`Profil verisi başarıyla okundu -> Followers: ${followersCount}, Following: ${followingCount}`);
           }
         } catch (profileErr: unknown) {
           const msg = profileErr instanceof Error ? profileErr.message : String(profileErr);
-          this.logger.warn(`Profil çekilirken hata oluştu, followersCount=0 kullanılacak: ${msg}`);
+          this.logger.warn(`Profil çekilirken hata oluştu: ${msg}`);
         }
 
-        // 2. SONRA POSTLAR ÇEKİLİYOR
-        const rawPostsResponse = await dataSource.fetchPosts(scrapeParams);
+        // Eğer profil çekilemediyse, son bilinen geçerlifollowers/following değerini veritabanından alabiliriz
+        if (!isProfileFetchedSuccessfully || followersCount === 0) {
+          const lastMetric = await this.prisma.accountMetric.findFirst({
+            where: { accountId: account.id, followers: { gt: 0 } },
+            orderBy: { capturedAt: 'desc' },
+          });
+          if (lastMetric) {
+            followersCount = lastMetric.followers;
+            followingCount = lastMetric.following;
+            this.logger.warn(`Profil verisi alınamadığı için son geçerli değerler kullanılıyor -> Followers: ${followersCount}`);
+          }
+        }
 
+        // İstekler arası rastgele bekleme (Bot koruması önlemi)
+        await this.randomDelay(2, 4);
+
+        // 2. SONRA POSTLAR BATCH'LER HALİNDE ÇEKİLİYOR (15 dk timeout önlemi)
+        const batchSize = 30; // Her seferde çekilecek güvenli post adedi
+        let fetchedCount = 0;
+        let hasMore = true;
+        let currentSince = scrapeParams.since;
+        const targetMaxPosts = isDeepScan ? 200 : 30;
         let totalItemsCollected = 0;
-        const postsList = rawPostsResponse?.data || [];
-        totalItemsCollected = postsList.length;
 
-        for (const item of postsList) {
-          let normalizedPost: NormalizedPost;
+        while (hasMore && fetchedCount < targetMaxPosts) {
+          const currentBatchLimit = Math.min(batchSize, targetMaxPosts - fetchedCount);
           
-          if (sourceTypeKey === 'real') {
-            normalizedPost = ApiDataMapper.mapToNormalized(item);
-          } else if (sourceTypeKey === 'scrape' || sourceTypeKey === 'scraping') {
-            // TAKİPÇİ SAYISI MAPPER'A AKTARILIYOR
-            normalizedPost = ScrapeDataMapper.mapToNormalized(item, followersCount);
-          } else {
-            normalizedPost = MockDataMapper.mapToNormalized(item);
+          const batchParams = {
+            ...scrapeParams,
+            maxPosts: currentBatchLimit,
+            since: currentSince,
+          };
+
+          this.logger.log(`Batch veri çekiliyor... Toplam işlenen: ${fetchedCount}, Bu batch limiti: ${currentBatchLimit}`);
+
+          const rawPostsResponse = await dataSource.fetchPosts(batchParams);
+          const postsList = rawPostsResponse?.data || [];
+
+          if (postsList.length === 0) {
+            hasMore = false;
+            break;
           }
 
-          if (!normalizedPost.igMediaId) continue;
-
-          let mediaType = 'IMAGE';
-          const rawType = normalizedPost.type?.toUpperCase();
-          if (rawType === 'CAROUSEL_ALBUM' || rawType === 'CAROUSEL') {
-            mediaType = 'CAROUSEL';
-          } else if (rawType === 'VIDEO') {
-            mediaType = 'VIDEO';
-          }
-
-          const savedPost = await this.prisma.post.upsert({
-            where: { igMediaId: normalizedPost.igMediaId },
-            update: { 
-              caption: normalizedPost.caption,
-              type: mediaType,
-              imageUrl: normalizedPost.imageUrl,
-            },
-            create: {
-              accountId: account.id,
-              igMediaId: normalizedPost.igMediaId,
-              type: mediaType,
-              caption: normalizedPost.caption,
-              imageUrl: normalizedPost.imageUrl,
-              postedAt: normalizedPost.postedAt || new Date(),
-              permalink: normalizedPost.permalink || `https://instagram.com/p/${normalizedPost.igMediaId}`,
-            },
-          });
-
-          const likesCount = normalizedPost.metrics?.likes || 0;
-          const commentsCount = normalizedPost.metrics?.commentsCount || 0;
-          const reachCount = normalizedPost.metrics?.reach || 0;
-          const viewsCount = normalizedPost.metrics?.views || 0;
-          const engagementRate = normalizedPost.metrics?.engagementRate ?? 0;
-
-          await this.prisma.postMetric.upsert({
-            where: { postId: savedPost.id },
-            update: {
-              likes: likesCount,
-              commentsCount: commentsCount,
-              reach: reachCount,
-              views: viewsCount,
-              engagementRate: engagementRate,
-            },
-            create: {
-              postId: savedPost.id,
-              likes: likesCount,
-              commentsCount: commentsCount,
-              views: viewsCount,
-              reach: reachCount,
-              engagementRate: engagementRate,
-            },
-          });
-
-          let commentsData = normalizedPost.comments;
-
-          if (!commentsData || (Array.isArray(commentsData) && commentsData.length === 0)) {
-            try {
-              const commentsResponse = await dataSource.fetchComments({
-                accessToken: decryptedAccessToken,
-                igMediaId: normalizedPost.igMediaId,
-              });
-
-              const rawFetchedComments = Array.isArray(commentsResponse) 
-                ? commentsResponse 
-                : (commentsResponse?.data || commentsResponse?.comments || []);
-
-              if (Array.isArray(rawFetchedComments) && rawFetchedComments.length > 0) {
-                commentsData = rawFetchedComments.map((c: any) => ({
-                  authorHash: c.username || c.from?.username || c.authorHash || 'anonymous',
-                  text: c.text || c.message || '',
-                  commentedAt: c.timestamp || c.commentedAt ? new Date(c.timestamp || c.commentedAt) : new Date(),
-                }));
-              }
-            } catch (err) {
-              // Hata yutulur
+          for (const item of postsList) {
+            let normalizedPost: NormalizedPost;
+            
+            if (sourceTypeKey === 'real') {
+              normalizedPost = ApiDataMapper.mapToNormalized(item);
+            } else if (sourceTypeKey === 'scrape' || sourceTypeKey === 'scraping') {
+              normalizedPost = ScrapeDataMapper.mapToNormalized(item, followersCount);
+            } else {
+              normalizedPost = MockDataMapper.mapToNormalized(item);
             }
-          }
 
-          if (commentsData && Array.isArray(commentsData) && commentsData.length > 0) {
-            for (const commentItem of commentsData) {
-              const existingComment = await this.prisma.comment.findFirst({
-                where: {
-                  postId: savedPost.id,
-                  text: commentItem.text,
-                  authorHash: commentItem.authorHash || 'anonymous',
-                },
-              });
+            if (!normalizedPost.igMediaId) continue;
 
-              if (!existingComment) {
-                await this.prisma.comment.create({
-                  data: {
+            let mediaType = 'IMAGE';
+            const rawType = normalizedPost.type?.toUpperCase();
+            if (rawType === 'CAROUSEL_ALBUM' || rawType === 'CAROUSEL') {
+              mediaType = 'CAROUSEL';
+            } else if (rawType === 'VIDEO') {
+              mediaType = 'VIDEO';
+            }
+
+            const savedPost = await this.prisma.post.upsert({
+              where: { igMediaId: normalizedPost.igMediaId },
+              update: { 
+                caption: normalizedPost.caption,
+                type: mediaType,
+                imageUrl: normalizedPost.imageUrl,
+              },
+              create: {
+                accountId: account.id,
+                igMediaId: normalizedPost.igMediaId,
+                type: mediaType,
+                caption: normalizedPost.caption,
+                imageUrl: normalizedPost.imageUrl,
+                postedAt: normalizedPost.postedAt || new Date(),
+                permalink: normalizedPost.permalink || `https://instagram.com/p/${normalizedPost.igMediaId}`,
+              },
+            });
+
+            const likesCount = normalizedPost.metrics?.likes || 0;
+            const commentsCount = normalizedPost.metrics?.commentsCount || 0;
+            const reachCount = normalizedPost.metrics?.reach || 0;
+            const viewsCount = normalizedPost.metrics?.views || 0;
+            const engagementRate = normalizedPost.metrics?.engagementRate ?? 0;
+
+            await this.prisma.postMetric.upsert({
+              where: { postId: savedPost.id },
+              update: {
+                likes: likesCount,
+                commentsCount: commentsCount,
+                reach: reachCount,
+                views: viewsCount,
+                engagementRate: engagementRate,
+              },
+              create: {
+                postId: savedPost.id,
+                likes: likesCount,
+                commentsCount: commentsCount,
+                views: viewsCount,
+                reach: reachCount,
+                engagementRate: engagementRate,
+              },
+            });
+
+            let commentsData = normalizedPost.comments;
+
+            if (!commentsData || (Array.isArray(commentsData) && commentsData.length === 0)) {
+              try {
+                await this.randomDelay(1, 3);
+
+                const commentsResponse = await dataSource.fetchComments({
+                  accessToken: decryptedAccessToken,
+                  igMediaId: normalizedPost.igMediaId,
+                });
+
+                const rawFetchedComments = Array.isArray(commentsResponse) 
+                  ? commentsResponse 
+                  : (commentsResponse?.data || commentsResponse?.comments || []);
+
+                if (Array.isArray(rawFetchedComments) && rawFetchedComments.length > 0) {
+                  commentsData = rawFetchedComments.map((c: any) => ({
+                    authorHash: c.username || c.from?.username || c.authorHash || 'anonymous',
+                    text: c.text || c.message || '',
+                    commentedAt: c.timestamp || c.commentedAt ? new Date(c.timestamp || c.commentedAt) : new Date(),
+                  }));
+                }
+              } catch (err) {
+                // Hata yutulur
+              }
+            }
+
+            if (commentsData && Array.isArray(commentsData) && commentsData.length > 0) {
+              for (const commentItem of commentsData) {
+                const existingComment = await this.prisma.comment.findFirst({
+                  where: {
                     postId: savedPost.id,
-                    authorHash: commentItem.authorHash || 'anonymous',
                     text: commentItem.text,
-                    commentedAt: commentItem.commentedAt || new Date(),
+                    authorHash: commentItem.authorHash || 'anonymous',
                   },
                 });
+
+                if (!existingComment) {
+                  await this.prisma.comment.create({
+                    data: {
+                      postId: savedPost.id,
+                      authorHash: commentItem.authorHash || 'anonymous',
+                      text: commentItem.text,
+                      commentedAt: commentItem.commentedAt || new Date(),
+                    },
+                  });
+                }
               }
             }
           }
+
+          fetchedCount += postsList.length;
+          totalItemsCollected = fetchedCount;
+
+          if (postsList.length < currentBatchLimit) {
+            hasMore = false;
+          } else {
+            const oldestPostInBatch = postsList[postsList.length - 1];
+            if (oldestPostInBatch?.timestamp || oldestPostInBatch?.postedAt) {
+              currentSince = new Date(oldestPostInBatch.timestamp || oldestPostInBatch.postedAt).toISOString();
+            } else {
+              hasMore = false;
+            }
+          }
+
+          // Batch'ler arasında kısa bekleme
+          await this.randomDelay(2, 4);
         }
 
         await this.prisma.collectionJob.update({
@@ -248,14 +331,20 @@ export class CollectorProcessor extends WorkerHost {
           this.logger.log(`Cache invalidated: overview:${account.id}:*`);
         }
 
-        // 3. EN BAŞTA ÇEKİLEN PROFİL BİLGİLERİYLE METRİK KAYDI YAPILIYOR (Mükerrer istek kaldırıldı)
         try {
+
+          // Eğer o an yeni post çekilmediyse bile, hesabın veritabanındaki toplam post sayısını alabiliriz 
+          // ya da o anki totalItemsCollected değerini yazabiliriz. 
+          const currentTotalPosts = await this.prisma.post.count({
+            where: { accountId: account.id },
+          });
+
           await this.prisma.accountMetric.create({
             data: {
               accountId: account.id,
               followers: Number(followersCount),
               following: Number(followingCount),
-              mediaCount: totalItemsCollected,
+              mediaCount: currentTotalPosts,
               capturedAt: new Date(),
             },
           });

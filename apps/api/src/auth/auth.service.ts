@@ -207,6 +207,7 @@ export class AuthService {
     }
 
     const rawToken = crypto.randomBytes(32).toString('hex');
+    console.log('--- TEST ŞİFRE SIFIRLAMA TOKENI ---', rawToken);
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     
     const expiresAt = new Date();

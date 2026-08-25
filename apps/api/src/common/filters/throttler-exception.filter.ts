@@ -1,5 +1,5 @@
 import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger } from '@nestjs/common';
-import { Request, Response } from 'express';
+import { Response } from 'express';
 
 @Catch()
 export class ThrottlerExceptionFilter implements ExceptionFilter {
@@ -15,11 +15,26 @@ export class ThrottlerExceptionFilter implements ExceptionFilter {
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
-    // Eğer hata 429 (Too Many Requests) ise şüpheli aktivite olarak logla
     if (status === HttpStatus.TOO_MANY_REQUESTS) {
+      const reqAny = request as any;
+      const clientIp = reqAny.ip || reqAny.socket?.remoteAddress || 'Bilinmiyor';
+      
+      // Headers nesnesine güvenli erişim için .get() metodu veya any cast:
+      const userAgent = (request.headers as any)?.['user-agent'] || request.headers.get?.('user-agent') || 'Bilinmiyor';
+
       this.logger.warn(
-        `ŞÜPHELİ AKTİVİTE (Rate Limit Aşıldı)! IP: ${request.ip}, Rota: ${request.url}, User-Agent: ${request.headers['user-agent']}`
+        `ŞÜPHELİ AKTİVİTE (Rate Limit Aşıldı)! IP: ${clientIp}, Rota: ${request.url}, User-Agent: ${userAgent}`
       );
+
+      // Throttler'ın koyduğu Retry-After başlığını alıyoruz (saniye cinsinden), yoksa varsayılan 60 sn veriyoruz
+      const retryAfter = response.getHeader('Retry-After') || 60;
+
+      return response.status(HttpStatus.TOO_MANY_REQUESTS).json({
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        error: 'Too Many Requests',
+        message: 'Çok fazla istek yapıldı. Lütfen biraz bekleyin.',
+        retryAfterSeconds: Number(retryAfter), // <-- Frontend'in sayaç için kullanacağı saniye
+      });
     }
 
     if (exception instanceof HttpException) {

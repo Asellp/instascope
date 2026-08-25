@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, HttpException, HttpStatus} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { Prisma, Role } from '@prisma/client';
@@ -39,19 +39,25 @@ export class AccountsService {
   ) {}
 
   async create(dto: CreateAccountDto, userId: string) {
-    // Eğer igAccountId boş string veya null/undefined geldiyse null kabul et
+    // 1. COOLDOWN KONTROLÜ
+    const cooldownKey = `cooldown:add-account:${userId}`;
+    const isCooldownActive = await this.cacheService.get(cooldownKey);
+
+    if (isCooldownActive) {
+      throw new HttpException(
+        'Yeni bir hesap eklemek için lütfen bir süre bekleyin.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
     let fetchedIgAccountId: string | null = 
       dto.igAccountId && dto.igAccountId.trim() !== '' ? dto.igAccountId : null;
 
-    // Eğer igAccountId elde edilemediyse ve token varsa Meta'dan otomatik çekmeyi dene
     if (!fetchedIgAccountId && dto.sourceType === 'API' && dto.accessTokenEnc) {
       try {
-        // Önce kullanıcının sayfalarını ve bağlı Instagram hesaplarını çekiyoruz
         const url = `https://graph.facebook.com/v18.0/me/accounts?fields=instagram_business_account{id},name&access_token=${dto.accessTokenEnc}`;
         const response = await fetch(url);
         const data = await response.json();
-
-        console.log('--- META SAYFALAR YANITI ---', JSON.stringify(data));
 
         if (data.data && Array.isArray(data.data)) {
           for (const page of data.data) {
@@ -80,36 +86,60 @@ export class AccountsService {
       },
     });
 
-    await this.collectQueue.add(
-      'collect-account-job',
-      { accountId: account.id, igUsername: account.igUsername },
-      {
-        repeat: {
-          pattern: account.scheduleCron || '0 */6 * * *', // 6 saatte bir
+    // 2. KUYRUK İŞLERİNİ GÜVENLİ EKLEME (JobId çakışmalarını önleyecek şekilde)
+    try {
+      // Hemen çalışacak ilk iş
+      await this.collectQueue.add(
+        'collect-account-job',
+        { accountId: account.id, igUsername: account.igUsername },
+        { jobId: `collect-immediate-${account.id}` }
+      );
+
+      // Periyodik standart tarama işi (6 saatte bir)
+      await this.collectQueue.add(
+        'collect-account-job',
+        { accountId: account.id, igUsername: account.igUsername },
+        {
+          repeat: {
+            pattern: account.scheduleCron || '0 */6 * * *',
+          },
+          jobId: `collect-${account.id}`,
         },
-        jobId: `collect-${account.id}`,
-      },
-    );
-    // 2. YENİ: Haftalık derin tarama işi (Örn: Pazar günleri saat 03:00'te deep: true bayrağıyla tetiklenir)
-    await this.collectQueue.add(
-      'collect-account-job',
-      { accountId: account.id, igUsername: account.igUsername, deep: true },
-      {
-        repeat: {
-          pattern: '0 3 * * 0', // Haftada bir, Pazar 03:00
+      );
+
+      // Haftalık derin tarama işi (Pazar 03:00)
+      await this.collectQueue.add(
+        'collect-account-job',
+        { accountId: account.id, igUsername: account.igUsername, deep: true },
+        {
+          repeat: {
+            pattern: '0 3 * * 0',
+          },
+          jobId: `collect-deep-${account.id}`,
         },
-        jobId: `collect-deep-${account.id}`,
-      },
-    );
+      );
+    } catch (queueError) {
+      console.error('Kuyruğa iş eklenirken hata oluştu:', queueError);
+    }
+
     await this.auditService.log({
       userId: userId,
       action: 'CREATE_ACCOUNT',
       resource: `account:${account.id}`,
     });
 
-    return account;
+    const cooldownSeconds = 300;
+    await this.cacheService.set(cooldownKey, 'active', cooldownSeconds);
+
+    const nextAllowedAt = new Date(Date.now() + cooldownSeconds * 1000).toISOString();
+
+    return {
+      ...account,
+      nextAllowedAt,
+    };
   }
-  // Admin tüm hesapları, normal kullanıcı sadece kendi hesaplarını görür
+
+  // --- Diğer metodlar aynı kalıyor ---
   async findAll(userId: string, userRole: Role) {
     if (userRole === Role.ADMIN) {
       return this.prisma.trackedAccount.findMany();
@@ -119,7 +149,6 @@ export class AccountsService {
     });
   }
 
-  // IDOR Korumalı findOne: Kullanıcı admin değilse ve hesap kendisine ait değilse hata fırlatır
   async findOne(id: string, userId?: string, userRole?: Role) {
     const account = await this.prisma.trackedAccount.findUnique({
       where: { id },
@@ -209,7 +238,6 @@ export class AccountsService {
     try {
       const repeatableJobs = await this.collectQueue.getRepeatableJobs();
       
-      // 1. Standart periyodik işi bul ve sil
       const standardJob = repeatableJobs.find(
         (job) => job.id === `collect-${id}`,
       );
@@ -217,7 +245,6 @@ export class AccountsService {
         await this.collectQueue.removeRepeatableByKey(standardJob.key);
       }
 
-      // 2. YENİ: Haftalık derin tarama işini bul ve sil
       const deepJob = repeatableJobs.find(
         (job) => job.id === `collect-deep-${id}`,
       );
@@ -231,7 +258,6 @@ export class AccountsService {
     try {
       const deletedAccount = await this.prisma.trackedAccount.delete({ where: { id } });
 
-      // BURAYA EKLEMELİYİZ: Hesap silindiğinde audit log atılması
       await this.auditService.log({
         userId: userId,
         action: 'DELETE_ACCOUNT',
@@ -260,10 +286,8 @@ export class AccountsService {
     const cacheKey = `overview:${accountId}:${range}`;
     const cached = await this.cacheService.get<AccountOverviewResponse>(cacheKey);
     if (cached) {
-      console.log(`[Cache HIT] Key: ${cacheKey}`);
       return cached;
     }
-    console.log(`[Cache MISS] Key: ${cacheKey}`);
 
     const days = RANGE_TO_DAYS[range];
     const startDate = new Date();
@@ -416,7 +440,7 @@ export class AccountsService {
       };
     });
   }
-  // AI Tarafından İstenen Yeni Metot: getSentimentReasons
+
   async getSentimentReasons(accountId: string, userId: string, userRole: Role) {
     await this.findOne(accountId, userId, userRole);
 
@@ -523,7 +547,6 @@ export class AccountsService {
 
     const payload = analysisResult.payload as any;
 
-    // snake_case gelebilecek alanları camelCase'e mapleme/garantiye alma
     return {
       mae: payload.mae ?? payload.MAE ?? 0,
       naiveMae: payload.naive_mae ?? payload.naiveMae ?? payload.naiveMAE ?? 0,
@@ -537,7 +560,6 @@ export class AccountsService {
   async getSpamSummary(accountId: string, userId: string, userRole: Role) {
     await this.findOne(accountId, userId, userRole);
 
-    // Hesaba bağlı tüm postları ve yorumların hem id'sini hem text'ini çekiyoruz
     const posts = await this.prisma.post.findMany({
       where: { accountId },
       include: { comments: { select: { id: true, text: true } } },
@@ -562,7 +584,6 @@ export class AccountsService {
       };
     }
 
-    // Bu yorumlara ait kind: 'spam' analiz sonuçlarını çekiyoruz
     const spamResults = await this.prisma.analysisResult.findMany({
       where: {
         subjectType: 'comment',
@@ -610,5 +631,61 @@ export class AccountsService {
       spamRate,
       flaggedComments,
     };
+  }
+
+  async predictLikes(
+    accountId: string,
+    hour: number,
+    dayOfWeek: number,
+    caption: string,
+    contentType: 'IMAGE' | 'VIDEO' | 'CAROUSEL',
+    userId: string,
+    userRole: Role,
+  ) {
+    await this.findOne(accountId, userId, userRole);
+
+    const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+
+    try {
+      const response = await fetch(`${aiServiceUrl}/internal/predict-likes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-token': process.env.INTERNAL_SECRET_TOKEN || '',
+        },
+        body: JSON.stringify({
+          account_id: accountId,
+          hour,
+          day_of_week: dayOfWeek,
+          caption,
+          content_type: contentType,
+        }),
+      });
+
+      if (response.status === 503) {
+        throw new HttpException(
+          'Model henüz yeterli veri yok, tahmin yapılamıyor.',
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new HttpException(
+          'AI servisinden beklenmeyen bir hata alındı.',
+          response.status,
+        );
+      }
+
+      return await response.json();
+    } catch (error: unknown) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        'AI servisine ulaşılamıyor veya sunucu hatası oluştu.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
   }
 }

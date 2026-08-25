@@ -9,10 +9,11 @@ import { DataSourceFactory } from '../sources/data-source.factory';
 import { RealDataSourceService } from '../sources/real-data-source.service';
 import { ScrapeDataSourceService } from '../sources/scrape-data-source.service';
 import { MockDataSourceService } from '../sources/mock-data-source.service';
-import { AiDataSourceService } from '../sources/ai-data-source.service'; // <--- Eksik olan servis eklendi
+import { AiDataSourceService } from '../sources/ai-data-source.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { CacheModule } from '../cache/cache.module';
 import { TokenEncryptionModule } from 'src/common/encryption/token-encryption.module';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Module({
   imports: [
@@ -41,20 +42,46 @@ import { TokenEncryptionModule } from 'src/common/encryption/token-encryption.mo
   ],
 })
 export class CollectorModule implements OnModuleInit {
-  constructor(@InjectQueue('collect') private collectQueue: Queue) {}
+  constructor(
+    @InjectQueue('collect') private collectQueue: Queue,
+    private prisma: PrismaService,
+  ) {}
 
   async onModuleInit() {
-    await this.collectQueue.add(
-      'scheduled-collect',
-      {},
-      {
-        repeat: {
-          every: 6 * 60 * 60 * 1000, // 6 saat
-        },
-        removeOnComplete: true,
-        removeOnFail: true,
-      },
-    );
-    console.log('Her 6 saatte bir çalışacak "collect" kuyruğu başarıyla tanımlandı!');
+    try {
+      const activeAccounts = await this.prisma.trackedAccount.findMany({
+        where: { status: 'active' },
+      });
+
+      for (const account of activeAccounts) {
+        // 1. Her 6 saatte bir çalışacak standart tarama işi ('0 */6 * * *')
+        await this.collectQueue.add(
+          'collect-account-job',
+          { accountId: account.id, igUsername: account.igUsername },
+          {
+            repeat: {
+              pattern: '0 */6 * * *',
+            },
+            jobId: `collect-${account.id}`,
+          },
+        );
+
+        // 2. Pazar günleri 03:00'te çalışacak haftalık derin tarama işi
+        await this.collectQueue.add(
+          'collect-account-job',
+          { accountId: account.id, igUsername: account.igUsername, deep: true },
+          {
+            repeat: {
+              pattern: '0 3 * * 0',
+            },
+            jobId: `collect-deep-${account.id}`,
+          },
+        );
+      }
+
+      console.log(`[CollectorModule] ${activeAccounts.length} hesap için 6 saatlik periyodik ve derin tarama işleri senkronize edildi!`);
+    } catch (error) {
+      console.error('[CollectorModule] Periyodik işler senkronize edilirken hata oluştu:', error);
+    }
   }
 }

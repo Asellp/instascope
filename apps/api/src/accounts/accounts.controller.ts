@@ -10,6 +10,7 @@ import {
   HttpStatus,
   UseGuards,
   Req,
+  HttpException,
 } from '@nestjs/common';
 import { AccountsService } from './accounts.service';
 import { CreateAccountDto } from './dto/create-account.dto';
@@ -21,10 +22,10 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '@prisma/client';
+// import { Throttle } from '@nestjs/throttler'; // Throttler kullanacaksanız aktif edin
 
 @ApiTags('accounts')
 @ApiBearerAuth()
-// Tüm controller artık JWT ile korunuyor.
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('accounts')
 export class AccountsController {
@@ -32,18 +33,43 @@ export class AccountsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  // @Throttle({ default: { limit: 3, ttl: 60000 } }) // Dakikada en fazla 3 hesap ekleme denemesi
   @ApiResponse({
     status: 201,
     description: 'Hesap başarıyla oluşturuldu.',
     type: AccountResponseDto,
   })
+  @ApiResponse({
+    status: 429,
+    description: 'Çok fazla istek gönderildi. Lütfen bekleyin.',
+  })
   create(@Body() createAccountDto: CreateAccountDto, @Req() req: any) {
-    // JWT guard sayesinde req.user dolu gelir. Kullanıcının ID'sini buradan alıyoruz.
     const userId = req.user.userId || req.user.id;
     return this.accountsService.create(createAccountDto, userId);
   }
 
-  // Kullanıcı admin ise tümünü, normal kullanıcı ise sadece kendi hesaplarını görür.
+  @Post(':id/predict-likes')
+  @HttpCode(HttpStatus.OK)
+  // @Throttle({ default: { limit: 10, ttl: 60000 } }) // AI tahmin endpoint'ini spam'e karşı koruma
+  async predictLikes(
+    @Param('id') id: string,
+    @Body() body: { hour: number; day_of_week: number; caption: string; content_type: 'IMAGE' | 'VIDEO' | 'CAROUSEL' },
+    @Req() req: any,
+  ) {
+    const userId = req.user?.userId || req.user?.id;
+    const userRole = req.user?.role;
+
+    return await this.accountsService.predictLikes(
+      id,
+      body.hour,
+      body.day_of_week,
+      body.caption,
+      body.content_type,
+      userId,
+      userRole,
+    );
+  }
+
   @Get()
   @HttpCode(HttpStatus.OK)
   findAll(@Req() req: any) {
@@ -69,14 +95,13 @@ export class AccountsController {
   @HttpCode(HttpStatus.OK)
   getAccountPosts(
     @Param('id') id: string,
-    @Query() query: PostsQueryDto,
+    @Query() query:PostsQueryDto,
     @Req() req: any,
   ) {
     const user = req.user;
     return this.accountsService.getAccountPosts(id, query, user.userId || user.id, user.role);
   }
 
-  // B3.1 - GET /accounts/:id/overview?range=7d|30d|90d
   @Get(':id/overview')
   @HttpCode(HttpStatus.OK)
   getAccountOverview(
@@ -88,14 +113,13 @@ export class AccountsController {
     return this.accountsService.getOverview(id, query.range, user.userId || user.id, user.role);
   }
 
-  // B3.3 - GET /accounts/:id/sentiment
   @Get(':id/sentiment')
   @HttpCode(HttpStatus.OK)
   getSentimentBreakdown(@Param('id') id: string, @Req() req: any) {
     const user = req.user;
     return this.accountsService.getSentimentBreakdown(id, user.userId || user.id, user.role);
   }
-  // AI Tarafından İstenen Yeni Endpoint: sentiment-reasons
+
   @Get(':id/sentiment-reasons')
   @HttpCode(HttpStatus.OK)
   getSentimentReasons(@Param('id') id: string, @Req() req: any) {
@@ -103,7 +127,6 @@ export class AccountsController {
     return this.accountsService.getSentimentReasons(id, user.userId || user.id, user.role);
   }
 
-  // B3.3 - GET /accounts/:id/hashtags
   @Get(':id/hashtags')
   @HttpCode(HttpStatus.OK)
   getHashtagAnalysis(@Param('id') id: string, @Req() req: any) {
@@ -117,7 +140,6 @@ export class AccountsController {
     return this.accountsService.getTopicsAnalysis(id, user.userId || user.id, user.role);
   }
 
-  // Silme işlemi - sadece ADMIN rolü yapabilir.
   @Roles(Role.ADMIN)
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
@@ -137,7 +159,7 @@ export class AccountsController {
     @Param('id') id: string,
     @Req() req: any,
   ) {
-    const userId = req.user?.id;
+    const userId = req.user?.id || req.user?.userId;
     const userRole = req.user?.role;
     return this.accountsService.getLikesBaseline(id, userId, userRole);
   }
@@ -147,7 +169,7 @@ export class AccountsController {
     @Param('id') id: string,
     @Req() req: any,
   ) {
-    const userId = req.user?.id;
+    const userId = req.user?.id || req.user?.userId;
     const userRole = req.user?.role;
     return this.accountsService.getSpamSummary(id, userId, userRole);
   }
